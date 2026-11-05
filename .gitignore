@@ -12,3 +12,5 @@ uploads/
 artifacts/
 .DS_Store
 paper-research*.md
+
+.vercel/

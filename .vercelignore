@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+.venv/
+local-docs/
+tests/
+.pytest_cache/
+__pycache__/
+**/__pycache__/
+.git/
+.streamlit/
+*.pdf
+artifacts/
+uploads/
+paper-research*.md

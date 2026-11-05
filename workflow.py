@@ -28,6 +28,7 @@ class ResearchState(TypedDict):
     status: str
     error: str
     next_agent: str
+    deadline: float
 
 
 def initial_state(question: str, pages: dict[int, str]) -> ResearchState:
@@ -37,7 +38,7 @@ def initial_state(question: str, pages: dict[int, str]) -> ResearchState:
         evidence=prepare_passages(pages), investigator_findings={}, methods_findings={},
         review={}, reviews=[], correction_count=0, correction_history=[], final_report="",
         writer_findings={}, events=[], visits=[], model_calls=0, tool_calls=0,
-        status="running", error="", next_agent="")
+        status="running", error="", next_agent="", deadline=0.0)
 
 
 def citations(ids: list[str], state: ResearchState) -> str:

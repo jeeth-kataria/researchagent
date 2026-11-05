@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f4f1ea" />
+    <meta
+      name="description"
+      content="A close reading of one research paper, with specialist findings and source passages you can inspect."
+    />
+    <title>Research Team — Research Desk</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to the research desk</a>
+    <aside class="sidebar" aria-label="Workspace navigation">
+      <a class="brand" href="/" aria-label="Research Team home"
+        ><span>research</span><br /><span
+          >team<span class="brand-dot">.</span></span
+        ></a
+      >
+      <div class="sidebar-rule"></div>
+      <p class="eyebrow sidebar-label">Workspace</p>
+      <nav class="side-nav">
+        <button class="side-link active" type="button" data-view="report">
+          Current paper
+        </button>
+        <button class="side-link" type="button" data-view="team">
+          Team notes
+        </button>
+        <button class="side-link" type="button" data-view="sources">
+          Evidence
+        </button>
+        <button class="side-link" type="button" data-view="activity">
+          Activity
+        </button>
+      </nav>
+      <div class="sidebar-bottom">
+        <p class="eyebrow">One paper.<br />A closer reading.</p>
+        <p class="sidebar-filename" id="side-filename">No paper selected</p>
+        <span class="sidebar-version">Research Desk / 01</span>
+      </div>
+    </aside>
+    <main id="main" tabindex="-1">
+      <header class="masthead">
+        <p class="eyebrow breadcrumb" id="breadcrumb">
+          Research desk / New investigation
+        </p>
+        <div class="header-actions">
+          <button class="text-button" id="new-run" type="button" hidden>
+            New investigation</button
+          ><button
+            class="button button-small"
+            id="export"
+            type="button"
+            disabled
+          >
+            Export Markdown
+          </button>
+        </div>
+      </header>
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow accent">Paper Research Team</p>
+        <h1 id="page-title">A closer look at the paper.</h1>
+        <p class="intro-description">
+          Four specialist perspectives. Findings you can trace back to the page.
+        </p>
+      </section>
+      <div id="service-message" class="notice" role="status" hidden></div>
+      <section id="setup-section" aria-label="Start an investigation">
+        <form id="investigation-form">
+          <div class="setup-grid">
+            <div class="upload-column">
+              <label class="eyebrow field-label" for="paper"
+                >01 / The paper</label
+              >
+              <div class="file-area" id="drop-area">
+                <span class="document-mark" aria-hidden="true">PDF</span>
+                <p class="file-title" id="file-title">Choose a paper</p>
+                <p class="file-description" id="file-description">
+                  Drop a PDF here or browse your files.
+                </p>
+                <label class="upload-button" for="paper"
+                  >Choose PDF<input
+                    id="paper"
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    required
+                /></label>
+                <p class="file-hint" id="file-hint">
+                  English · embedded text · up to 4 MB
+                </p>
+              </div>
+            </div>
+            <div class="question-column">
+              <label class="eyebrow field-label" for="question"
+                >02 / Your question</label
+              ><textarea
+                id="question"
+                name="question"
+                maxlength="2000"
+                rows="4"
+                required
+                placeholder="What does this paper contribute, and where is the evidence limited?"
+              ></textarea>
+              <div class="question-tools">
+                <button class="text-button accent" id="example" type="button">
+                  Use an example question</button
+                ><span class="small muted" id="question-length">0 / 2,000</span>
+              </div>
+              <div class="submit-line">
+                <p class="form-note">
+                  Selected paper passages and your question go to Groq.<br />No
+                  other papers are searched.
+                </p>
+                <button class="button" id="start" type="submit">
+                  Start investigation <span aria-hidden="true">↗</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <p class="form-error" id="form-error" role="alert" hidden></p>
+        </form>
+        <div class="how-it-works">
+          <p class="eyebrow">The reading process</p>
+          <div class="process">
+            <span><b>01</b> Investigate the paper</span
+            ><i aria-hidden="true">→</i><span><b>02</b> Assess the methods</span
+            ><i aria-hidden="true">→</i
+            ><span><b>03</b> Review &amp; correct once</span
+            ><i aria-hidden="true">→</i><span><b>04</b> Write the report</span>
+          </div>
+        </div>
+      </section>
+      <section id="results" aria-label="Investigation results" hidden>
+        <div class="paper-meta">
+          <span id="result-filename"></span
+          ><span class="muted" id="result-page-count"></span
+          ><button class="text-button" id="change-paper" type="button">
+            Change paper or question
+          </button>
+        </div>
+        <div class="question-context">
+          <p class="eyebrow accent">Your question</p>
+          <p id="result-question"></p>
+        </div>
+        <div class="run-status" aria-live="polite">
+          <span class="status-dot" id="status-dot"></span
+          ><span id="status-text">Preparing investigation…</span
+          ><span class="run-counts" id="run-counts"></span>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Investigation views">
+          <button
+            id="tab-report"
+            role="tab"
+            aria-selected="true"
+            aria-controls="panel-report"
+            data-view="report"
+            type="button"
+          >
+            Report
+          </button>
+          <button
+            id="tab-team"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-team"
+            data-view="team"
+            type="button"
+            tabindex="-1"
+          >
+            Team notes
+          </button>
+          <button
+            id="tab-sources"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-sources"
+            data-view="sources"
+            type="button"
+            tabindex="-1"
+          >
+            Sources
+          </button>
+          <button
+            id="tab-activity"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-activity"
+            data-view="activity"
+            type="button"
+            tabindex="-1"
+          >
+            Activity
+          </button>
+          <button
+            id="tab-pages"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-pages"
+            data-view="pages"
+            type="button"
+            tabindex="-1"
+          >
+            Extracted text
+          </button>
+        </div>
+        <div class="result-grid">
+          <div class="panels">
+            <section
+              class="tabpanel"
+              id="panel-report"
+              role="tabpanel"
+              aria-labelledby="tab-report"
+              tabindex="0"
+            >
+              <div id="report-content"></div>
+            </section>
+            <section
+              class="tabpanel"
+              id="panel-team"
+              role="tabpanel"
+              aria-labelledby="tab-team"
+              tabindex="0"
+              hidden
+            >
+              <div id="team-content"></div>
+            </section>
+            <section
+              class="tabpanel"
+              id="panel-sources"
+              role="tabpanel"
+              aria-labelledby="tab-sources"
+              tabindex="0"
+              hidden
+            >
+              <p class="panel-intro">
+                Exact passages from the extracted PDF. An existing passage is
+                not proof that a claim is supported.
+              </p>
+              <label class="small" for="source-filter"
+                >Find a word or evidence ID</label
+              ><input
+                id="source-filter"
+                class="source-filter"
+                type="search"
+                placeholder="e.g. baseline or E0001"
+              />
+              <div id="sources-content"></div>
+            </section>
+            <section
+              class="tabpanel"
+              id="panel-activity"
+              role="tabpanel"
+              aria-labelledby="tab-activity"
+              tabindex="0"
+              hidden
+            >
+              <p class="panel-intro">
+                Actual model requests and local tool executions. Private model
+                reasoning is not recorded.
+              </p>
+              <div id="activity-content"></div>
+            </section>
+            <section
+              class="tabpanel"
+              id="panel-pages"
+              role="tabpanel"
+              aria-labelledby="tab-pages"
+              tabindex="0"
+              hidden
+            >
+              <p class="panel-intro">
+                Physical PDF pages, including cover pages. Check reading order
+                and missing columns, tables, equations, or scanned content. No
+                OCR is used.
+              </p>
+              <div id="pages-content"></div>
+            </section>
+          </div>
+          <aside
+            class="source-notes"
+            id="source-notes"
+            tabindex="-1"
+            aria-label="Selected source passage"
+          >
+            <p class="eyebrow">Source notes</p>
+            <div id="selected-source">
+              <p class="margin-empty">
+                Choose an evidence reference to read its source here.
+              </p>
+            </div>
+            <div class="reviewer-margin">
+              <p class="eyebrow accent">Reviewer notes</p>
+              <div id="margin-review">
+                <p class="margin-empty">
+                  The reviewer’s concerns will appear after the review.
+                </p>
+              </div>
+            </div>
+          </aside>
+        </div>
+        <details class="run-details">
+          <summary>About this investigation</summary>
+          <p id="provenance"></p>
+          <p>
+            Only this paper was investigated. Suggestions are proposals, not
+            established findings or claims of global novelty. All four roles use
+            the same model. Valid citations and matching quotes do not guarantee
+            semantic support or scientific verification. The writer’s report
+            receives no further reviewer pass.
+          </p>
+          <p>
+            Results are kept in this browser tab’s session storage. Refreshing
+            never starts a new run. “New investigation” clears the previous
+            record.
+          </p>
+        </details>
+      </section>
+      <footer class="page-footer">
+        <span class="eyebrow">Read closely. Keep the questions open.</span
+        ><span>One paper · No literature search</span>
+      </footer>
+    </main>
+  </body>
+</html>

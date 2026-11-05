@@ -24,14 +24,16 @@ def sanitize(value, secret: str = ""):
 
 def make_client(api_key: str) -> groq.Groq:
     if not api_key.strip():
-        raise RunError("GROQ_API_KEY is missing. Set it in your local .env or Streamlit secrets.")
+        raise RunError("GROQ_API_KEY is missing. Set it in your local .env or deployment environment.")
     return groq.Groq(api_key=api_key, max_retries=0, timeout=60.0)
 
 
 def call_model(client, model: str, messages: list[dict], tool_definitions: list[dict],
-               max_tokens: int, allow_tools: bool = True):
+               max_tokens: int, allow_tools: bool = True, timeout: float | None = None):
     """Return an SDK message, including tool calls. Every invocation is one request."""
     options = {}
+    if timeout is not None:
+        options['timeout'] = timeout
     if model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}:
         options.update(reasoning_effort="low", include_reasoning=False)
     try:

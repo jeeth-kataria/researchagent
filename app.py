@@ -1,185 +1,167 @@
-"""Streamlit UI: one explicit start action, with persistent complete/partial results."""
+"""Research Desk: standard-library HTTP boundary for the existing Python graph.
+
+Run `python app.py` locally. Vercel imports the same WSGI application through
+api/research.py. Each investigation lives in one streamed HTTP request.
+"""
 
 import hashlib
 import json
 import os
-import re
+import time
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
+from wsgiref.simple_server import make_server
 
-import streamlit as st
 from dotenv import load_dotenv
 from langgraph.config import get_stream_writer
 
 from agents import Limits
 from llm import RunError, make_client, sanitize
-from pdf_reader import PDFError, extract_pdf, labeled_text
+from pdf_reader import PDFError, extract_pdf
 from workflow import build_graph, initial_state
 
-load_dotenv(Path(__file__).with_name(".env"))
-st.set_page_config(page_title="Paper Research Team", page_icon="📄", layout="centered")
+ROOT = Path(__file__).parent
+if not os.getenv('VERCEL'):
+    load_dotenv(ROOT / '.env')
+STATIC = {'/': ('index.html', 'text/html; charset=utf-8'),
+          '/styles.css': ('styles.css', 'text/css; charset=utf-8'),
+          '/app.js': ('app.js', 'text/javascript; charset=utf-8')}
 
 
-def setting(name: str, default: str = "") -> str:
-    """Shell environment/.env takes precedence over Streamlit secrets."""
-    if name in os.environ:
-        return os.environ[name].strip()
-    try:
-        return str(st.secrets.get(name, default)).strip()
-    except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
-        return default
-
-
-def integer_setting(name: str, default: int) -> int:
-    try:
-        result = int(setting(name, str(default)))
-        if result < 1:
-            raise ValueError
-        return result
-    except ValueError:
-        raise RunError(f"{name} must be a positive integer.") from None
-
-
-def markdown_download(result: dict) -> str:
-    """Export validated findings and source passages, including incomplete-run status."""
-    state = result["state"]
-    parts = ["# Paper Research Team — run record",
-             f"PDF: {result['filename']}\n\nSHA-256: {result['digest']}",
-             f"Model via Groq: {result['model']}\n\nStatus: {state['status']}",
-             f"Question: {state['question']}",
-             f"Model requests: {state['model_calls']} · Tool executions: {state['tool_calls']}"]
-    parts.append(state["final_report"] if state["status"] == "complete"
-                 else "## Incomplete run\n" + state["error"] + "\nNo completed report was produced.")
-    for key, title in [("investigator_findings", "Investigator findings"),
-                       ("methods_findings", "Methods findings"),
-                       ("reviews", "Reviewer history"), ("correction_history", "Correction history")]:
-        parts.extend([f"## {title}", "```json\n" + json.dumps(state[key], indent=2, ensure_ascii=False) + "\n```"])
-    referenced = set(re.findall(r"\bE\d{4,}\b", "\n".join(parts)))
-    parts.append("## Referenced source passages")
-    for evidence_id in sorted(referenced):
-        if evidence_id in state["evidence"]:
-            entry = state["evidence"][evidence_id]
-            parts.extend([f"### {evidence_id} · PDF page {entry['page']}", entry["text"]])
-    parts.append("Only the uploaded paper was investigated. No external literature search or "
-                 "global novelty assessment was performed. Valid references and matching quotes "
-                 "do not guarantee semantic correctness. Agent agreement is not scientific verification.")
-    return "\n\n".join(parts)
-
-
-st.title("Paper Research Team")
-st.write("Four specialist agents investigate one paper, assess its methods, review the findings, "
-         "and write a report. They may make one targeted correction.")
-st.caption("English PDFs with embedded text only. No OCR or external-paper search. "
-           "On Start investigation, your question and selected paper passages are sent to Groq.")
-try:
-    max_upload = integer_setting("MAX_UPLOAD_MB", 10)
-    max_chars = integer_setting("MAX_TEXT_CHARS", 20_000)
-    limits = Limits(
-        model_per_visit=integer_setting("MAX_MODEL_REQUESTS_PER_VISIT", 3),
-        tools_per_visit=integer_setting("MAX_TOOL_CALLS_PER_VISIT", 2),
-        total_model_calls=integer_setting("MAX_TOTAL_MODEL_REQUESTS", 24),
-        output_tokens=integer_setting("GROQ_MAX_OUTPUT_TOKENS", 2048),
-    )
-except RunError as error:
-    st.error(str(error))
-    st.stop()
-
-upload = st.file_uploader("Upload one research-paper PDF", type=["pdf"], max_upload_size=max_upload)
-question = st.text_area("Question about the paper", max_chars=2000,
-    placeholder="Explain this paper’s contribution, assess its experimental evidence, identify "
-                "its stated limitations, and suggest follow-up research questions.")
-model = setting("GROQ_MODEL", "openai/gpt-oss-20b")
-st.caption(f"Upload limit: {max_upload} MB · Extracted text: {max_chars:,} characters · "
-           f"Groq model: {model}")
-st.caption(f"Per visit: {limits.model_per_visit} model requests, {limits.tools_per_visit} tools. "
-           f"Run limit: {limits.total_model_calls} model requests and one correction cycle. "
-           "A run can exhaust free-tier quotas.")
-
-if st.button("Start investigation", type="primary"):
-    if upload is None or not question.strip():
-        st.error("Upload a PDF and enter a question before starting.")
-    else:
-        status = st.empty()
+def settings() -> dict:
+    def number(name, default):
         try:
-            status.info("Extracting PDF text…")
-            data = upload.getvalue()
-            pages = extract_pdf(data, max_upload, max_chars)
-            st.session_state["extraction"] = {"filename": upload.name, "text": labeled_text(pages)}
-            state = initial_state(question, pages)
-            key = setting("GROQ_API_KEY")
-            result = {"filename": upload.name, "digest": hashlib.sha256(data).hexdigest(),
-                      "model": model, "state": state}
-            try:
-                with make_client(key) as client:
-                    # Custom events stream to the main UI thread; no Streamlit calls in graph nodes.
-                    graph = build_graph(client, model, limits,
-                                        on_event=lambda event: get_stream_writer()(event))
-                    for mode, update in graph.stream(state, stream_mode=["updates", "custom"]):
-                        if mode == "custom":
-                            detail = update.get("tool", update["kind"].replace("_", " "))
-                            status.info(f"{update['agent'].capitalize()}: {detail}")
-                        elif mode == "updates":
-                            result["state"] = next(iter(update.values()))
-            except RunError as error:
-                result["state"]["status"] = "incomplete"
-                result["state"]["error"] = str(error)
-            except Exception:
-                result["state"]["status"] = "incomplete"
-                result["state"]["error"] = "Unexpected workflow error. Available findings are preserved."
-            # Views/exports redact known credentials; the raw registry is used only during execution.
-            st.session_state["result"] = sanitize(result, key)
-            status.empty()
-        except (PDFError, RunError) as error:
-            status.empty()
-            st.error(str(error))
+            value = int(os.getenv(name, str(default)))
+            if value < 1:
+                raise ValueError
+            return value
+        except ValueError:
+            raise RunError(f'{name} must be a positive integer.') from None
+    return {
+        'key': os.getenv('GROQ_API_KEY', '').strip(),
+        'model': os.getenv('GROQ_MODEL', 'openai/gpt-oss-20b').strip(),
+        # Four MiB plus form fields fits below Vercel's 4.5 MB body ceiling.
+        'max_upload_mb': min(number('MAX_UPLOAD_MB', 4), 4),
+        'max_text_chars': number('MAX_TEXT_CHARS', 20_000),
+        'limits': Limits(model_per_visit=number('MAX_MODEL_REQUESTS_PER_VISIT', 3),
+                         tools_per_visit=number('MAX_TOOL_CALLS_PER_VISIT', 2),
+                         total_model_calls=number('MAX_TOTAL_MODEL_REQUESTS', 24),
+                         output_tokens=number('GROQ_MAX_OUTPUT_TOKENS', 2048)),
+    }
 
-if "extraction" in st.session_state:
-    extraction = st.session_state["extraction"]
-    with st.expander(f"PDF extraction preview — {extraction['filename']}"):
-        st.text(sanitize(extraction["text"], setting("GROQ_API_KEY")))
-        st.caption("Physical PDF page numbers include cover pages. Check extraction order and "
-                   "missing tables, figures, formulas, or scanned pages. No text is silently truncated.")
 
-if "result" in st.session_state:
-    result = sanitize(st.session_state["result"], setting("GROQ_API_KEY"))
-    state = result["state"]
-    st.divider()
-    st.subheader("Investigation results")
-    st.write("PDF: " + result["filename"])
-    st.caption(f"SHA-256: {result['digest']} · Model via Groq: {result['model']}")
-    st.write("Question: " + state["question"])
-    st.caption("These results belong to the PDF/question above. Changing inputs does not rerun "
-               "the team. An invalid new upload leaves the previous result visible.")
-    st.write(f"Model requests: {state['model_calls']} · Tool executions: {state['tool_calls']} · "
-             f"Correction cycles: {state['correction_count']}/1")
-    if state["status"] == "complete":
-        st.success("Investigation completed. Agent agreement is not scientific verification.")
-    else:
-        st.error("Incomplete run: " + state["error"])
-        st.info("Available findings and tool results are preserved below. No completed report was produced.")
-    for field, title in [("investigator_findings", "Paper investigator"),
-                         ("methods_findings", "Methods analyst"),
-                         ("review", "Critical reviewer — latest decision"),
-                         ("writer_findings", "Report writer — structured findings")]:
-        with st.expander(title):
-            st.json(state[field])
-    with st.expander("Reviewer decisions and correction history"):
-        st.json({"reviews": state["reviews"], "corrections": state["correction_history"]})
-    with st.expander("Execution events — tool calls, arguments, and source passages"):
-        for event in state["events"]:
-            st.write(f"{event['agent']}: {event['kind'].replace('_', ' ')}")
-            if event["kind"] == "tool_executed":
-                st.code(event["tool"], language=None)
-                st.json(event["arguments"])
-                st.json(event["result"])
-            elif "message" in event:
-                st.write(event["message"])
-        st.caption("Operational events and explicit findings only; private model reasoning is not recorded. "
-                   "Credential-looking strings are redacted in views and downloads.")
-    if state["final_report"] and state["status"] == "complete":
-        st.subheader("Final report")
-        st.markdown(state["final_report"])
-    st.caption("References are checked against exact extracted passages and physical pages. "
-               "These checks cannot prove semantic support. Keyword search can miss paraphrases. "
-               "The writer's report receives no additional reviewer pass.")
-    st.download_button("Download Markdown", markdown_download(result),
-                       file_name="paper-research-report.md", mime="text/markdown", on_click="ignore")
+def parse_upload(environ, maximum_bytes: int) -> tuple[bytes, str, str]:
+    """Parse one bounded multipart request without a third-party upload package."""
+    try:
+        length = int(environ.get('CONTENT_LENGTH', '0'))
+    except ValueError:
+        raise RunError('Invalid upload length.') from None
+    if not 0 < length <= maximum_bytes + 16_384:
+        raise RunError('Upload one PDF no larger than 4 MB, plus a short question.')
+    content_type = environ.get('CONTENT_TYPE', '')
+    if not content_type.startswith('multipart/form-data;') or '\r' in content_type or '\n' in content_type:
+        raise RunError('Expected a PDF and question in a multipart form.')
+    body = environ['wsgi.input'].read(length)
+    if len(body) != length:
+        raise RunError('The upload did not finish. Please select the PDF again.')
+    message = BytesParser(policy=policy.default).parsebytes(
+        f'Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n'.encode() + body)
+    if not message.is_multipart():
+        raise RunError('The upload form could not be read.')
+    fields = {}
+    for part in message.iter_parts():
+        name = part.get_param('name', header='content-disposition')
+        if name not in {'paper', 'question'} or name in fields or part.is_multipart():
+            raise RunError('Upload exactly one PDF and one question.')
+        fields[name] = part
+    if set(fields) != {'paper', 'question'}:
+        raise RunError('Choose a PDF and enter a question before starting.')
+    data = fields['paper'].get_payload(decode=True) or b''
+    if len(data) > maximum_bytes:
+        raise RunError('The PDF exceeds the configured upload limit (at most 4 MB).')
+    try:
+        question = (fields['question'].get_payload(decode=True) or b'').decode('utf-8').strip()
+    except UnicodeError:
+        raise RunError('The question must be readable text.') from None
+    if not question or len(question) > 2000:
+        raise RunError('Enter a question of at most 2,000 characters.')
+    filename = (fields['paper'].get_filename() or 'paper.pdf').replace('\\', '/').split('/')[-1][:180]
+    filename = ''.join(character for character in filename if character.isprintable()) or 'paper.pdf'
+    return data, filename, question
+
+
+def public_state(state: dict, key: str) -> dict:
+    """Pages/registry are sent once; events are streamed separately, never reasoning."""
+    return sanitize({name: value for name, value in state.items()
+                     if name not in {'pages', 'evidence', 'events', 'deadline'}}, key)
+
+
+def investigate(data: bytes, filename: str, question: str, pages: dict, config: dict):
+    """Yield real graph events and validated snapshots; keep failures inspectable."""
+    state = initial_state(question, pages)
+    state['deadline'] = time.monotonic() + 240
+    meta = {'filename': filename, 'digest': hashlib.sha256(data).hexdigest(),
+            'question': question, 'model': config['model']}
+    yield {'type': 'extraction', 'meta': sanitize(meta, config['key']),
+           'pages': sanitize(pages, config['key']), 'evidence': sanitize(state['evidence'], config['key'])}
+    yield {'type': 'state', 'state': public_state(state, config['key'])}
+    try:
+        with make_client(config['key']) as client:
+            graph = build_graph(client, config['model'], config['limits'],
+                                on_event=lambda event: get_stream_writer()(event))
+            for mode, update in graph.stream(state, stream_mode=['updates', 'custom']):
+                if mode == 'custom':
+                    yield {'type': 'event', 'event': sanitize(update, config['key'])}
+                else:
+                    state = next(iter(update.values()))
+                    yield {'type': 'state', 'state': public_state(state, config['key'])}
+    except GeneratorExit:
+        raise  # A disconnected browser must not cause a retry/new investigation.
+    except Exception:
+        state['status'] = 'incomplete'
+        state['error'] = 'The investigation could not finish. Available findings are preserved; no retry was made.'
+        state['final_report'] = ''
+        yield {'type': 'state', 'state': public_state(state, config['key'])}
+    yield {'type': 'finished', 'status': state['status']}
+
+
+def application(environ, start_response):
+    """Serve only explicit static paths and one same-origin research endpoint."""
+    def response(status, payload):
+        body = json.dumps(payload, ensure_ascii=False).encode()
+        start_response(status, [('Content-Type', 'application/json; charset=utf-8'),
+                                 ('Cache-Control', 'no-store'), ('X-Content-Type-Options', 'nosniff')])
+        return [body]
+    path, method = environ.get('PATH_INFO', '/'), environ.get('REQUEST_METHOD', 'GET')
+    if path in STATIC and method == 'GET':
+        filename, content_type = STATIC[path]
+        start_response('200 OK', [('Content-Type', content_type), ('X-Content-Type-Options', 'nosniff')])
+        return [(ROOT / 'public' / filename).read_bytes()]
+    if path != '/api/research':
+        return response('404 Not Found', {'error': 'Not found.'})
+    if method not in {'GET', 'POST'}:
+        return response('405 Method Not Allowed', {'error': 'Use GET for configuration or POST to investigate.'})
+    try:
+        config = settings()
+        if method == 'GET':
+            return response('200 OK', {'ready': bool(config['key']), 'model': config['model'],
+                'max_upload_mb': config['max_upload_mb'], 'max_text_chars': config['max_text_chars']})
+        if not config['key']:
+            return response('503 Service Unavailable', {'error': 'The server needs a Groq API key before investigations can start.'})
+        data, filename, question = parse_upload(environ, config['max_upload_mb'] * 1024 * 1024)
+        pages = extract_pdf(data, config['max_upload_mb'], config['max_text_chars'])
+    except (RunError, PDFError) as error:
+        return response('400 Bad Request', {'error': str(error)})
+    start_response('200 OK', [('Content-Type', 'application/x-ndjson; charset=utf-8'),
+                              ('Cache-Control', 'no-store'), ('X-Content-Type-Options', 'nosniff'),
+                              ('X-Accel-Buffering', 'no')])
+    return ((json.dumps(event, ensure_ascii=False) + '\n').encode()
+            for event in investigate(data, filename, question, pages, config))
+
+
+if __name__ == '__main__':
+    port = int(os.getenv('PORT', '8000'))
+    print(f'Research Desk: http://localhost:{port}')
+    with make_server('127.0.0.1', port, application) as server:
+        server.serve_forever()

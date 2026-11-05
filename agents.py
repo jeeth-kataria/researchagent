@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from dataclasses import dataclass
 
 from llm import RunError, call_model, sanitize
@@ -217,6 +218,9 @@ def run_agent(role: str, state: dict, client, model: str, limits: Limits,
     inspected_source = False
     fetched_findings = False
     for index in range(limits.model_per_visit):
+        remaining = state.get('deadline', 0) - time.monotonic() if state.get('deadline') else None
+        if remaining is not None and remaining <= 0:
+            raise RunError('The hosting time budget was reached. Run incomplete; available findings are preserved.')
         if state["model_calls"] >= limits.total_model_calls:
             raise RunError("Total model-request budget exhausted. Run incomplete; available findings preserved.")
         allow_tools = (index < limits.model_per_visit - 1
@@ -226,7 +230,8 @@ def run_agent(role: str, state: dict, client, model: str, limits: Limits,
         visit["model_calls"] += 1
         emit(state, role, "model_request", {"number": state["model_calls"]}, on_event, secret)
         message = call_model(client, model, messages, tool_definitions(role),
-                             limits.output_tokens, allow_tools)
+                             limits.output_tokens, allow_tools,
+                             timeout=min(45.0, remaining) if remaining is not None else None)
         calls = message.tool_calls or []
         if not calls:
             if role == "writer" and not fetched_findings:
