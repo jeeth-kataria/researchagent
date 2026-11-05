@@ -1,5 +1,7 @@
 # Paper Research Team — Research Desk
 
+**Live application:** https://research-team-rho.vercel.app
+
 A small Python research-paper workflow with a custom, paper-inspired web interface.
 Upload one English PDF, ask a question, and inspect contributions, experimental
 claims, limitations, proposed follow-ups, reviewer concerns, and exact source
@@ -183,5 +185,8 @@ pypdf 6.21.4, LangGraph 1.2.20, Groq 1.7.0, python-dotenv 1.2.4, pytest 9.2.0.
 - **73 Python tests passed**, using mocked Groq responses and the actual graph.
 - Desktop/mobile browser checks passed for upload feedback, streamed graph output,
   source and activity views, keyboard tabs, Markdown contents, and refresh persistence.
+- Live Vercel checks passed for the desktop/mobile UI, Python configuration
+  endpoint, security headers, secret-file exclusion, and invalid-PDF response.
+- No live Groq inference was performed during this deployment.
 - Browser checks use real graph output with mocked SDK responses; they do not
   establish live model quality, scientific correctness, or sustained free-tier capacity.
