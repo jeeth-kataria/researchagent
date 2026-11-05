@@ -1,0 +1,7 @@
+# Direct dependencies; tested on Python 3.12.2. See README for verification.
+streamlit==1.66.1
+pypdf==6.21.4
+langgraph==1.2.20
+groq==1.7.0
+python-dotenv==1.2.4
+pytest==9.2.0
