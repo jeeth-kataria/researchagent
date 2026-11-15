@@ -129,7 +129,15 @@ def test_missing_information_concern_does_not_need_fake_evidence():
 
 
 @pytest.mark.parametrize('role', ['reader', 'analyst', 'reviewer'])
-def test_empty_search_alone_cannot_satisfy_required_inspection(role):
+def test_empty_search_alone_cannot_satisfy_required_inspection(role, monkeypatch):
+    import agents
+    original = agents.reading_packet
+    def previews_only(current_role, state, maximum):
+        packet = original(current_role, state, maximum)
+        if current_role == role:
+            packet["source_passages"] = []
+        return packet
+    monkeypatch.setattr(agents, "reading_packet", previews_only)
     prefix = sum((visit(previous) for previous in ROLES[:ROLES.index(role)]), [])
     output = review() if role == 'reviewer' else findings()
     state, _ = run(prefix + [response(calls=[tool('search_paper', {'query': 'zzznomatch'})]), response(output)])
@@ -251,7 +259,14 @@ def test_disallowed_tools_and_arguments_are_not_executed_or_logged(name, args):
     assert not any(event['kind'] == 'tool_executed' for event in state['events'])
 
 
-def test_final_without_source_is_incomplete():
+def test_final_without_source_is_incomplete(monkeypatch):
+    import agents
+    original = agents.reading_packet
+    def previews_only(role, state, maximum):
+        packet = original(role, state, maximum)
+        packet["source_passages"] = []
+        return packet
+    monkeypatch.setattr(agents, "reading_packet", previews_only)
     state, _ = run([response(findings())])
     assert state['status'] == 'incomplete' and 'inspect original source' in state['error']
 

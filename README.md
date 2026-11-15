@@ -81,8 +81,8 @@ the existing conversation; provider token counts include that repetition.
 
 Only two model-callable tools exist: `search_paper(query)` (keyword overlap, up to
 four bounded matches) and `get_evidence(evidence_id)` (one exact passage). No embeddings,
-vector database or external search is used. Reader, analyst and reviewer must also
-retrieve a nonempty source passage through a tool. An empty search does not count.
+vector database or external search is used. Reader, analyst and reviewer must receive nonempty full source passages, through
+their packet or a tool response. Previews and empty searches alone do not count.
 
 Coverage distinguishes extraction, short previews, confirmed full-passage submission
 and text not supplied to each role. Confirmation means the provider returned a
@@ -108,8 +108,8 @@ but a real passage can still be irrelevant to a conclusion.
 | `MAX_TOTAL_MODEL_REQUESTS` | 12; legacy settings up to 24 remain valid without adding visits |
 | `PORT` | 8000 for `python app.py`; Uvicorn CLI uses `--port` |
 
-Four visits permit **at most 12 model requests and 8 tool executions**. A typical
-minimal successful path needs seven requests and three tools. Every follow-up is
+Four visits permit **at most 12 model requests and 8 tool executions**. A successful path can finish in four requests with source packets alone; tools
+add follow-up requests when the model chooses them. Every follow-up is
 a request; a response with two tool requests executes two tools. Counters include
 attempts, including failures. SDK retries are disabled. A cooperative 240-second
 deadline starts after extraction; individual hosted calls are capped at 45 seconds.
@@ -171,7 +171,7 @@ node --check public/app.js
 node --check tests/frontend_contract.cjs
 ```
 
-Session verification: **146 mocked tests passed; one local socket smoke test skipped**
+Session verification: **147 mocked tests passed; one local socket smoke test skipped**
 because this execution environment denies binding. JavaScript syntax checks passed.
 A local live synthetic comparison stopped after one connection failure in the baseline;
 the workflow arm was not started. That is a partial smoke attempt, not an evaluation

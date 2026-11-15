@@ -126,3 +126,17 @@ def test_tool_budget_omissions_are_explicit_and_do_not_truncate_passages():
     unavailable, supplied = bound_tool_result('get_evidence', entries[0], 0)
     assert supplied == [] and 'text' not in unavailable
     assert 'limit' in unavailable['unavailable']
+
+
+def test_confirmed_packets_allow_four_calls_without_redundant_tools():
+    client = Mock(api_key='mock-only')
+    client.chat.completions.create.side_effect = [
+        HELPERS['response'](HELPERS['findings']()),
+        HELPERS['response'](HELPERS['findings']()),
+        HELPERS['response'](HELPERS['findings'](writer=True)),
+        HELPERS['response'](HELPERS['review']())]
+    result = build_graph(client, 'model').invoke(document())
+    assert result['status'] == 'complete'
+    assert result['model_calls'] == 4 and result['tool_calls'] == 0
+    assert [visit['agent'] for visit in result['visits']] == ['reader','analyst','writer','reviewer']
+    assert all(result['coverage'][role]['evidence_ids'] for role in ('reader','analyst','reviewer'))

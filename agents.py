@@ -42,8 +42,8 @@ is insufficient. Writer may use the previous findings directly without tools.
 When tools are disabled, return final JSON. Use the document outline and supplied source_passages; previews are partial.
 Never claim comprehensive inspection when passages are omitted. Reader should cover
 different available sections; analyst should focus on methods/results; reviewer
-should revisit cited claims and missing regions. Use at least one source tool for
-reader, analyst, and reviewer even when a reading packet is provided.
+should revisit cited claims and missing regions. Full source_passages are source
+access; previews alone are insufficient. Use tools for additional evidence as needed.
 Never invent evidence IDs. Existing
 IDs/pages establish source addresses, not semantic support. Use evidence_ids arrays
 rather than inline citations. State missing information explicitly. Return ONLY
@@ -265,6 +265,8 @@ def run_agent(role: str, state: dict, client, model: str, limits: Limits,
         state['requests'].append(request)
         started = time.monotonic()
         def received():
+            nonlocal inspected_source
+            inspected_source |= any(entry['text'].strip() for entry in pending)
             request['status'] = 'responded'
             record_delivery(state, role, pending, previews)
         try:
@@ -319,7 +321,6 @@ def run_agent(role: str, state: dict, client, model: str, limits: Limits,
             # registry passages returned to this visit satisfy the requirement.
             for entry in entries:
                 validate_evidence([entry["evidence_id"]], state)
-                inspected_source |= bool(entry["text"].strip())
             emit(state, role, "tool_executed", {"tool": call.function.name,
                  "arguments": arguments, "result": result}, on_event, secret)
     raise RunError("Per-agent model-request budget exhausted. Run incomplete; available findings preserved.")
