@@ -106,6 +106,14 @@ so in overall_assessment while acknowledging limited inspection. No agent runs a
 }
 
 
+# A complete writer example makes the required per-record fields explicit.
+# These are format placeholders, not findings about any uploaded paper.
+ROLES["writer"] += "\nFORMAT TEMPLATE ONLY; replace every placeholder with grounded content:\n" + json.dumps({
+    "findings": [{"topic": topic, "statement": "Replace with concise paper content",
+                  "kind": "interpretation", "evidence_ids": ["E0001"]}
+                 for topic in DRAFT_TOPICS], "uncertainties": []})
+
+
 def parse_json(text: str) -> dict:
     def unique_object(pairs):
         result = {}
