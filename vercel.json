@@ -6,7 +6,7 @@
   "functions": {
     "api/research.py": {
       "maxDuration": 300,
-      "excludeFiles": "{.env,.env.*,local-docs/**,tests/**,.venv/**,.pytest_cache/**,__pycache__/**,.git/**,.streamlit/**}"
+      "excludeFiles": "{.env,.env.*,local-docs/**,tests/**,evaluation/**,evaluate.py,.venv/**,.pytest_cache/**,__pycache__/**,.git/**,.streamlit/**}"
     }
   },
   "headers": [

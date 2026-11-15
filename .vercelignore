@@ -13,3 +13,5 @@ __pycache__/
 artifacts/
 uploads/
 paper-research*.md
+evaluation/
+evaluate.py

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "synthetic-comparison", "kind": "synthetic", "paper_identifier": "Original synthetic sorting note",
+    "version": "v1", "source": "Original fixture authored for this project's evaluation mechanics",
+    "permission": "Original project fixture; no external paper or private feedback",
+    "question": "Assess whether the conclusion is supported by the reported comparison. Identify the specific ambiguity or unsupported claim.",
+    "pages": ["Abstract\nWe compare two sorting approaches and claim general superiority.\nIntroduction\nWe ask whether method A improves sorting time.", "Methods\nMethod A uses 100 inputs on one machine. Method B uses 1000 inputs on a different machine.\nResults\nA takes 2 ms and B takes 4 ms.\nConclusion\nWe conclude that A is faster for all input sizes."],
+    "known_issues": [{"id": "unmatched-comparison", "category": "unsupported_claim", "description": "Unlike input sizes and hardware do not isolate the sorting method; the universal conclusion exceeds the experiment.", "provenance": "Deliberately constructed synthetic defect, not an independent real-paper review", "version_match_confirmed": true, "match_criteria": "Identify the differing input size or hardware as a confound and connect it to the unsupported speed comparison or general conclusion.", "passages": [{"page": 2, "quote": "Method A uses 100 inputs on one machine."}, {"page": 2, "quote": "We conclude that A is faster for all input sizes."}]}]
+  },
+  {
+    "id": "synthetic-ambiguity", "kind": "synthetic", "paper_identifier": "Original synthetic accuracy note",
+    "version": "v1", "source": "Original fixture authored for evaluation mechanics",
+    "permission": "Original project fixture; no external paper or private feedback",
+    "question": "What experimental detail prevents interpreting the reported accuracy?",
+    "pages": ["Introduction\nWe investigate classification accuracy on a small dataset.\nMethods\nOur method is evaluated on selected examples.\nResults\nAccuracy improves by 10 percent.\nConclusion\nThe method improves accuracy."],
+    "known_issues": [{"id": "undefined-improvement", "category": "ambiguity", "description": "The reference accuracy and whether ten percent means relative change or percentage points are unspecified.", "provenance": "Deliberately constructed synthetic ambiguity, not a real-paper benchmark label", "version_match_confirmed": true, "match_criteria": "Explain the missing baseline or relative-versus-percentage-point ambiguity rather than simply requesting more experiments.", "passages": [{"page": 1, "quote": "Accuracy improves by 10 percent."}]}]
+  }
+]

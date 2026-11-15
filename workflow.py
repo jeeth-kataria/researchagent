@@ -1,6 +1,7 @@
 """Four fixed LangGraph stages; the final review never rewrites the draft."""
 
 import re
+import time
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -8,6 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from agents import DRAFT_TOPICS, Limits, emit, run_agent
 from llm import RunError
 from pdf_reader import prepare_passages
+from reading import sections_for, coverage_summary
 
 
 class ResearchState(TypedDict):
@@ -26,13 +28,23 @@ class ResearchState(TypedDict):
     status: str
     error: str
     deadline: float
+    reading: dict
+    coverage: dict
+    requests: list[dict]
+    usage: list[dict]
+    started_at: float
+    elapsed_seconds: float
 
 
 def initial_state(question: str, pages: dict[int, str]) -> ResearchState:
     if not question.strip() or len(question) > 2000 or not pages:
         raise RunError("Provide a question (at most 2000 characters) and extracted PDF pages.")
+    evidence = prepare_passages(pages)
     return ResearchState(question=question.strip(), pages=dict(pages),
-        evidence=prepare_passages(pages), reader_findings={}, analyst_findings={},
+        evidence=evidence, reading=sections_for(pages, evidence),
+        coverage={role: {"evidence_ids": [], "source_characters": 0, "preview_section_ids": []}
+                  for role in ("reader", "analyst", "writer", "reviewer")},
+        requests=[], usage=[], started_at=time.monotonic(), elapsed_seconds=0.0, reader_findings={}, analyst_findings={},
         report_draft={}, critical_review={}, final_output="", events=[], visits=[],
         model_calls=0, tool_calls=0, status="running", error="", deadline=0.0)
 
@@ -74,6 +86,14 @@ def render_output(state: ResearchState) -> str:
             parts.append("No concrete concerns were returned after limited inspection; this is not scientific approval.")
     else:
         parts.append("Not completed. Treat the available explanation as an unreviewed draft.")
+    parts.append("## Source coverage — delivery, not scientific verification")
+    coverage = coverage_summary(state)
+    parts.append(f"Extracted {coverage['extracted_characters']} characters across {coverage['sections']} regions ({coverage['outline_mode']}).")
+    for role, record in coverage['roles'].items():
+        parts.append(f"- {role}: {record['unique_source_characters']} unique full-passage characters supplied; "
+                     f"{record['characters_not_supplied']} not supplied; {len(record['preview_section_ids'])} region previews. "
+                     + citations(record['evidence_ids'], state))
+    parts.append("Sections/previews and supplied passages are not proof of understanding. Context limits can leave text uninspected.")
     parts.append("## Remaining uncertainties")
     uncertainties = list(dict.fromkeys(item for output in (
         state["reader_findings"], state["analyst_findings"], draft, review)
@@ -117,10 +137,12 @@ def build_graph(client, model: str, limits: Limits | None = None, on_event=None)
                 return state
             try:
                 state[output_fields[role]] = run_agent(role, state, client, model, limits, on_event)
+                state["elapsed_seconds"] = time.monotonic() - state["started_at"]
                 if role == "reviewer":
                     state["status"] = "complete"
                     state["final_output"] = render_output(state)
             except Exception as error:
+                state["elapsed_seconds"] = time.monotonic() - state["started_at"]
                 state["status"] = "incomplete"
                 state["error"] = str(error) if isinstance(error, RunError) else (
                     "Unexpected execution error. Available findings are preserved; check installation/configuration.")

@@ -1,11 +1,13 @@
 """Role prompts, small JSON validators, and one bounded function-calling loop."""
 
 import json
+import copy
 import re
 import time
 from dataclasses import dataclass
 
 from llm import RunError, call_model, sanitize
+from reading import reading_packet, bound_tool_result, record_delivery
 from tools import ToolError, execute_tool, tool_definitions, validate_arguments
 
 
@@ -16,8 +18,11 @@ class Limits:
     # Legacy settings up to 24 remain valid; four visits still cap a run at 12.
     total_model_calls: int = 12
     output_tokens: int = 2048
+    source_chars: int = 4800
 
     def __post_init__(self):
+        if type(self.source_chars) is not int or not 1600 <= self.source_chars <= 8000:
+            raise RunError("MAX_SOURCE_CHARS_PER_ROLE must be between 1600 and 8000.")
         for value, upper in [(self.model_per_visit, 3), (self.tools_per_visit, 2),
                              (self.total_model_calls, 24)]:
             if type(value) is not int or not 1 <= value <= upper:
@@ -34,7 +39,12 @@ Choose permitted tools using function calls. At most {models} model requests and
 {tools} tool executions this visit, including follow-ups. Reader, analyst, and
 reviewer MUST inspect nonempty source evidence before finalizing. An empty search
 is insufficient. Writer may use the previous findings directly without tools.
-When tools are disabled, return final JSON. Never invent evidence IDs. Existing
+When tools are disabled, return final JSON. Use the document outline and supplied source_passages; previews are partial.
+Never claim comprehensive inspection when passages are omitted. Reader should cover
+different available sections; analyst should focus on methods/results; reviewer
+should revisit cited claims and missing regions. Use at least one source tool for
+reader, analyst, and reviewer even when a reading packet is provided.
+Never invent evidence IDs. Existing
 IDs/pages establish source addresses, not semantic support. Use evidence_ids arrays
 rather than inline citations. State missing information explicitly. Return ONLY
 one JSON object, without fences. Follow-up ideas, if relevant, are proposals.
@@ -174,7 +184,7 @@ def validate_output(role: str, value: dict, state: dict) -> dict:
             affected = concern["affected_statement"]
             if concern["target"] == "report":
                 text_value(affected, 450)
-                if affected not in {item["statement"] for item in state["report_draft"]["findings"]}:
+                if affected not in {item["statement"] for item in state["report_draft"].get("findings", [])}:
                     raise RunError("Review concern must identify an existing draft statement exactly.")
             elif affected is not None:
                 raise RunError("Paper concerns must use null for affected_statement.")
@@ -221,6 +231,13 @@ def run_agent(role: str, state: dict, client, model: str, limits: Limits,
         context["analyst_findings"] = state["analyst_findings"]
     if role == "reviewer":
         context["report_draft"] = state["report_draft"]
+    packet = reading_packet(role, state, limits.source_chars)
+    for entry in packet['source_passages']:
+        validate_evidence([entry['evidence_id']], state)
+    context['reading_packet'] = packet
+    pending = packet['source_passages'][:]
+    supplied_chars = sum(len(entry['text']) for entry in pending)
+    previews = [section['section_id'] for section in packet['outline']]
     messages = [{"role": "system", "content": COMMON.format(
         models=limits.model_per_visit, tools=limits.tools_per_visit) + ROLES[role]},
         {"role": "user", "content": json.dumps(context)}]
@@ -241,9 +258,23 @@ def run_agent(role: str, state: dict, client, model: str, limits: Limits,
         state["model_calls"] += 1
         visit["model_calls"] += 1
         emit(state, role, "model_request", {"number": state["model_calls"]}, on_event, secret)
-        message = call_model(client, model, messages, tool_definitions(role),
-                             limits.output_tokens, allow_tools,
-                             timeout=min(45.0, remaining) if remaining is not None else None)
+        request = {"role": role, "messages": copy.deepcopy(messages),
+                   "tools": tool_definitions(role), "model": model,
+                   "output_tokens": limits.output_tokens, "allow_tools": allow_tools,
+                   "status": "attempted"}
+        state['requests'].append(request)
+        started = time.monotonic()
+        def received():
+            request['status'] = 'responded'
+            record_delivery(state, role, pending, previews)
+        try:
+            message = call_model(client, model, messages, tool_definitions(role),
+                                 limits.output_tokens, allow_tools,
+                                 timeout=min(45.0, remaining) if remaining is not None else None,
+                                 usage_log=state['usage'], on_response=received)
+        finally:
+            request['elapsed_seconds'] = time.monotonic() - started
+        pending, previews = [], []
         calls = message.tool_calls or []
         if not calls:
             if role != "writer" and not inspected_source:
@@ -278,11 +309,14 @@ def run_agent(role: str, state: dict, client, model: str, limits: Limits,
                 result = execute_tool(role, call.function.name, arguments, state)
             except ToolError as error:
                 raise RunError(str(error)) from None
+            result, entries = bound_tool_result(call.function.name, result,
+                                                limits.source_chars - supplied_chars)
+            supplied_chars += sum(len(entry['text']) for entry in entries)
+            pending.extend(entries)
             messages.append({"role": "tool", "tool_call_id": call.id,
                              "content": json.dumps(result)})
             # A no-match search is not source inspection. Only exact, nonempty
             # registry passages returned to this visit satisfy the requirement.
-            entries = result["matches"] if call.function.name == "search_paper" else [result]
             for entry in entries:
                 validate_evidence([entry["evidence_id"]], state)
                 inspected_source |= bool(entry["text"].strip())

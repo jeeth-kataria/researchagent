@@ -12,8 +12,8 @@ const roleFields = {reader: "reader_findings", analyst: "analyst_findings",
   writer: "report_draft", reviewer: "critical_review"};
 const draftTopics = ["Problem and proposed approach", "Main contributions",
   "Experimental evidence", "Limitations and missing information"];
-// Old correction-workflow records have a different shape and are not restored.
-const storageKey = "research-desk.run.v2";
+// Older records lack the source-delivery ledger and are not restored.
+const storageKey = "research-desk.run.v3";
 let run = null;
 let running = false;
 let selectedFile = null;
@@ -140,10 +140,37 @@ function reviewSection(state) {
   }
   return block;
 }
+function coveragePanel() {
+  const summary = run.state.coverage_summary;
+  const block = element("details", "coverage-panel");
+  block.append(element("summary", "", "Source coverage — what each role received"));
+  if (!summary) {
+    block.append(element("p", "", "Source delivery is recorded when a model response is received."));
+    return block;
+  }
+  block.append(element("p", "", `${summary.extracted_characters} extracted characters · ${summary.passages} exact passages · ${summary.sections} reading regions (${summary.outline_mode.replaceAll("_", " ")}).`));
+  block.append(element("p", "small", "A preview is only a short excerpt. Full-passage delivery is an operational measure, not proof of understanding or a complete review."));
+  for (const [role, record] of Object.entries(summary.roles)) {
+    const row = element("div", "coverage-row");
+    row.append(element("strong", "", roles[role] || role));
+    row.append(element("p", "small", `${record.unique_source_characters} unique source characters supplied; ${record.characters_not_supplied} not supplied. ${record.preview_section_ids.length} region previews supplied separately.`));
+    record.evidence_ids.forEach((id) => row.append(citation(id)));
+    if (record.evidence_not_supplied.length)
+      row.append(element("p", "small muted", `Not supplied to this role: ${record.evidence_not_supplied.join(", ")}. Source budgets and relevance selection limit reading.`));
+    block.append(row);
+  }
+  const outline = run.state.reading?.sections || [];
+  block.append(element("h3", "", "Extracted outline — previews are not full sections"));
+  outline.forEach((item) => {
+    block.append(element("p", "small", `${item.section_id} · ${item.title} · PDF page ${item.page}: ${item.preview}`));
+  });
+  return block;
+}
 function renderReport() {
   const host = $("report-content");
   host.replaceChildren();
   const state = run.state;
+  host.append(coveragePanel());
   if (state.status !== "complete") {
     const notice = element("div", "empty-state");
     notice.append(element("h2", "", state.status === "incomplete"
@@ -554,6 +581,7 @@ function markdownReport() {
     for (const role of ["reader", "analyst"])
       parts.push(`## ${roles[role]} findings\n\n${JSON.stringify(s[roleFields[role]], null, 2)}`);
     parts.push(`## Remaining uncertainties\n\n${allUncertainties(s).map((item) => `- ${item}`).join("\n")}`);
+    parts.push(`## Source coverage — delivery, not understanding\n\n${JSON.stringify(s.coverage_summary || {}, null, 2)}`);
     const referenced = new Set(parts.join("\n").match(/\bE\d{4,}\b/g) || []);
     parts.push("## Referenced source passages");
     [...referenced].sort().forEach((id) => {

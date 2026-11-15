@@ -29,17 +29,18 @@ def make_client(api_key: str) -> groq.Groq:
 
 
 def call_model(client, model: str, messages: list[dict], tool_definitions: list[dict],
-               max_tokens: int, allow_tools: bool = True, timeout: float | None = None):
+               max_tokens: int, allow_tools: bool = True, timeout: float | None = None, usage_log: list | None = None, on_response=None):
     """Return an SDK message, including tool calls. Every invocation is one request."""
     options = {}
     if timeout is not None:
         options['timeout'] = timeout
     if model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}:
         options.update(reasoning_effort="low", include_reasoning=False)
+    if tool_definitions:
+        options.update(tools=tool_definitions, tool_choice="auto" if allow_tools else "none")
     try:
         response = client.chat.completions.create(
-            model=model, messages=messages, tools=tool_definitions,
-            tool_choice="auto" if allow_tools else "none",
+            model=model, messages=messages,
             max_completion_tokens=max_tokens, **options,
         )
     except groq.AuthenticationError:
@@ -52,6 +53,12 @@ def call_model(client, model: str, messages: list[dict], tool_definitions: list[
     except groq.APIStatusError:
         raise RunError("Groq rejected the request. Check GROQ_MODEL availability, tool-calling "
                        "support, permissions, input size, and provider status.") from None
+    if on_response is not None:
+        on_response()  # The provider responded even if final JSON/finish validation later fails.
+    if usage_log is not None:
+        usage = getattr(response, 'usage', None)
+        usage_log.append({name: getattr(usage, name, None) for name in
+                          ('prompt_tokens', 'completion_tokens', 'total_tokens')})
     if not response.choices:
         raise RunError("Groq returned no choices.")
     choice = response.choices[0]

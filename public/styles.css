@@ -1101,3 +1101,7 @@ body.is-running #setup-section {
 .report-warning { border: 1px solid #b97e70; padding: 16px; margin: 20px 0; color: #783b30; }
 .report-warning p { margin-bottom: 0; }
 .draft-title { font: normal 24px Georgia, serif; margin-top: 28px; }
+
+.coverage-panel { padding: 16px 0; border-bottom: 1px solid var(--rule); margin-bottom: 20px; }
+.coverage-panel summary { cursor: pointer; color: var(--accent); }
+.coverage-row { padding: 10px 0; border-bottom: 1px solid var(--rule); }

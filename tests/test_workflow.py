@@ -86,7 +86,8 @@ def test_fixed_graph_four_roles_reviewer_last_and_tool_message_pairing():
         assert 'response_format' not in call.kwargs
         assert call.kwargs['model'] == 'openai/gpt-oss-20b'
         assert {item['function']['name'] for item in call.kwargs['tools']} == {'search_paper', 'get_evidence'}
-    assert 'A sorting comparison is the contribution.' not in second['messages'][1]['content']
+    assert 'reading_packet' in json.loads(second['messages'][1]['content'])
+    assert state['coverage']['reader']['evidence_ids']
     assert 'reasoning' not in json.dumps(state['events'])
     edges = {(edge.source, edge.target) for edge in build_graph(client, 'model').get_graph().edges}
     assert edges == set(zip(['__start__', *ROLES], [*ROLES, '__end__']))

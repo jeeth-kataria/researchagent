@@ -24,6 +24,7 @@ from agents import Limits
 from llm import RunError, make_client, sanitize
 from pdf_reader import PDFError, extract_pdf
 from workflow import build_graph, initial_state
+from reading import coverage_summary
 
 ROOT = Path(__file__).parent
 if not os.getenv('VERCEL'):
@@ -56,14 +57,16 @@ def settings() -> dict:
         'limits': Limits(model_per_visit=number('MAX_MODEL_REQUESTS_PER_VISIT', 3),
                          tools_per_visit=number('MAX_TOOL_CALLS_PER_VISIT', 2),
                          total_model_calls=number('MAX_TOTAL_MODEL_REQUESTS', 12),
-                         output_tokens=number('GROQ_MAX_OUTPUT_TOKENS', 2048)),
+                         output_tokens=number('GROQ_MAX_OUTPUT_TOKENS', 2048),
+                         source_chars=number('MAX_SOURCE_CHARS_PER_ROLE', 4800)),
     }
 
 
 def public_state(state: dict, key: str) -> dict:
     """Pages/registry are sent once; events are streamed separately, never reasoning."""
-    return sanitize({name: value for name, value in state.items()
-                     if name not in {'pages', 'evidence', 'events', 'deadline'}}, key)
+    return sanitize({**{name: value for name, value in state.items()
+                     if name not in {'pages', 'evidence', 'events', 'deadline', 'requests', 'started_at'}},
+                     'coverage_summary': coverage_summary(state)}, key)
 
 
 def investigate(data: bytes, filename: str, question: str, pages: dict, config: dict):
