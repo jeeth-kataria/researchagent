@@ -53,7 +53,10 @@ one JSON object, without fences. Follow-up ideas, if relevant, are proposals.
 FINDINGS_FORMAT = """
 Final JSON: {"findings": [{"topic": "short heading", "statement": "concise claim",
 "kind": "author_statement", "evidence_ids": ["E0001"]}], "uncertainties": []}.
-Use 1–6 findings. topic <=60 characters; statement <=450 characters.
+Use 1–6 findings. Every finding MUST contain exactly all four keys:
+"topic", "statement", "kind", "evidence_ids". The kind key is required for the
+Report Writer too. Do not use summary/content keys or group findings under headings.
+topic <=60 characters; statement <=450 characters.
 kind: author_statement, interpretation, or missing_information. Author statements
 and interpretations require 1–4 existing evidence IDs. Missing-information findings
 may have none; do not invent evidence for an absence. uncertainties: 0–4 nonempty
