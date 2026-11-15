@@ -203,10 +203,16 @@ Set the key/model in the server environment, never public files. `.env` and loca
 study notes remain excluded by `.vercelignore` and function-bundle exclusions.
 In a publishing checkout, locally exclude `/local-docs/` through `.git/info/exclude`
 before staging; private study notes are not part of the public source upload.
-Migration verification made no deployment, production-setting change or paid-service
-change. ASGI import/routing and
-configuration were checked locally; a Vercel build/deployment and current live
-behavior remain unverified. Existing aliases may serve the previous implementation.
+Production was subsequently deployed on **2026-11-15** from application commit
+`158ff0827873811937666b78a2741cb7b7a13c2e`. Vercel deployment
+`dpl_71DNz5vuyZYwwe1bSATCNQm2sFjz` reached **READY** and was aliased to
+[jeeth-researcher.vercel.app](https://jeeth-researcher.vercel.app). Live HTML and
+JavaScript matched the application source, public configuration returned HTTP 200,
+and missing fields/invalid PDFs returned the FastAPI HTTP 400 responses. `.env`,
+private notes and Python source URLs returned 404; security headers were present.
+No billing or production environment-variable changes were made. A complete
+Groq-powered review and model quality remain unverified; these checks used no
+live inference quota.
 
 ## Verification for this revision
 
@@ -231,4 +237,5 @@ checks passed. Requirements pin direct dependencies, not every transitive packag
   `python -m pytest -q -rs tests/test_smoke.py` attempts that check on an unrestricted
   machine using a real HTTP connection and a deliberately blocked mocked model.
 - Agent/core and frontend files were unchanged. No live Groq requests, accuracy
-  benchmarks, real-browser QA, Vercel build or deployment was performed.
+  benchmarks or real-browser QA were performed. The subsequent Vercel build and
+  production HTTP checks passed as documented above.
