@@ -88,7 +88,8 @@ Coverage distinguishes extraction, short previews, confirmed full-passage submis
 and text not supplied to each role. Confirmation means the provider returned a
 response, including a truncated one; a failed connection has unknown receipt.
 Prompts prepared before a failed request are not claimed as received. The UI/export
-show exact received IDs and omitted text counts. **Delivery is not understanding,
+show exact full-passage IDs and deduplicated text spans. Preview-only characters
+are counted separately; text not supplied in any form excludes overlapping previews. **Delivery is not understanding,
 complete section review or semantic correctness.** Shared findings are context, not
 new source inspection. Exact ID/page/offset validation prevents invented addresses,
 but a real passage can still be irrelevant to a conclusion.
@@ -171,7 +172,7 @@ node --check public/app.js
 node --check tests/frontend_contract.cjs
 ```
 
-Session verification: **147 mocked tests passed; one local socket smoke test skipped**
+Session verification: **148 mocked tests passed; one local socket smoke test skipped**
 because this execution environment denies binding. JavaScript syntax checks passed.
 A local live synthetic comparison stopped after one connection failure in the baseline;
 the workflow arm was not started. That is a partial smoke attempt, not an evaluation

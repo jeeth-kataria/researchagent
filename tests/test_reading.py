@@ -140,3 +140,19 @@ def test_confirmed_packets_allow_four_calls_without_redundant_tools():
     assert result['model_calls'] == 4 and result['tool_calls'] == 0
     assert [visit['agent'] for visit in result['visits']] == ['reader','analyst','writer','reviewer']
     assert all(result['coverage'][role]['evidence_ids'] for role in ('reader','analyst','reviewer'))
+
+
+def test_preview_receipts_are_counted_without_claiming_full_passage_coverage():
+    from reading import record_delivery
+    state = document()
+    sections = state['reading']['sections']
+    record_delivery(state, 'writer', [], [section['section_id'] for section in sections])
+    record = coverage_summary(state)['roles']['writer']
+    assert record['unique_source_characters'] == 0
+    assert record['preview_characters'] > 0
+    assert record['characters_supplied_in_any_form'] == record['preview_characters']
+    assert record['characters_not_supplied'] < record['full_passage_characters_not_supplied']
+    entry = next(iter(state['evidence'].values()))
+    record_delivery(state, 'writer', [entry])
+    updated = coverage_summary(state)['roles']['writer']
+    assert updated['characters_supplied_in_any_form'] < updated['preview_characters'] + len(entry['text'])

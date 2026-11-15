@@ -91,7 +91,7 @@ def render_output(state: ResearchState) -> str:
     parts.append(f"Extracted {coverage['extracted_characters']} characters across {coverage['sections']} regions ({coverage['outline_mode']}).")
     for role, record in coverage['roles'].items():
         parts.append(f"- {role}: {record['unique_source_characters']} unique full-passage characters supplied; "
-                     f"{record['characters_not_supplied']} not supplied; {len(record['preview_section_ids'])} region previews. "
+                     f"{record['characters_not_supplied']} not supplied in any form; {len(record['preview_section_ids'])} region previews. "
                      + citations(record['evidence_ids'], state))
     parts.append("Sections/previews and supplied passages are not proof of understanding. Context limits can leave text uninspected.")
     parts.append("## Remaining uncertainties")

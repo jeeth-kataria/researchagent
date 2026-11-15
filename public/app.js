@@ -153,10 +153,10 @@ function coveragePanel() {
   for (const [role, record] of Object.entries(summary.roles)) {
     const row = element("div", "coverage-row");
     row.append(element("strong", "", roles[role] || role));
-    row.append(element("p", "small", `${record.unique_source_characters} unique source characters supplied; ${record.characters_not_supplied} not supplied. ${record.preview_section_ids.length} region previews supplied separately.`));
+    row.append(element("p", "small", `${record.unique_source_characters} unique full-passage characters supplied; ${record.characters_not_supplied} characters not supplied in any form. ${record.preview_section_ids.length} region previews supplied separately.`));
     record.evidence_ids.forEach((id) => row.append(citation(id)));
     if (record.evidence_not_supplied.length)
-      row.append(element("p", "small muted", `Not supplied to this role: ${record.evidence_not_supplied.join(", ")}. Source budgets and relevance selection limit reading.`));
+      row.append(element("p", "small muted", `Not supplied as full passages: ${record.evidence_not_supplied.join(", ")}. Source budgets and relevance selection limit reading.`));
     block.append(row);
   }
   const outline = run.state.reading?.sections || [];

@@ -93,15 +93,34 @@ def record_delivery(state, role, entries, preview_ids=()):
     record['preview_section_ids'] = list(dict.fromkeys(record['preview_section_ids'] + list(preview_ids)))
 
 
+def span_characters(spans):
+    total = 0
+    for page in {span[0] for span in spans}:
+        end = 0
+        for _, start, stop in sorted(span for span in spans if span[0] == page):
+            total += max(0, stop - max(start, end))
+            end = max(end, stop)
+    return total
+
+
 def coverage_summary(state):
     total = sum(len(text) for text in state['pages'].values())
     roles = {}
     for role, record in state['coverage'].items():
         received = set(record['evidence_ids'])
-        unique = sum(len(state['evidence'][eid]['text']) for eid in received)
+        full = [(state['evidence'][eid]['page'], state['evidence'][eid]['start'],
+                 state['evidence'][eid]['end']) for eid in received]
+        previews = [(section['page'], section['start'], section['start']+len(section['preview']))
+                    for section in state['reading']['sections']
+                    if section['section_id'] in record['preview_section_ids']]
+        unique = span_characters(full)
+        any_form = span_characters(full + previews)
         roles[role] = {**record, 'unique_source_characters': unique,
-                       'characters_not_supplied': total-unique,
+                       'preview_characters': span_characters(previews),
+                       'characters_supplied_in_any_form': any_form,
+                       'characters_not_supplied': total-any_form,
+                       'full_passage_characters_not_supplied': total-unique,
                        'evidence_not_supplied': [eid for eid in state['evidence'] if eid not in received]}
     return {'extracted_characters': total, 'passages': len(state['evidence']),
             'outline_mode': state['reading']['mode'], 'sections': len(state['reading']['sections']),
-            'roles': roles, 'note': 'Successful response confirms source submission, not comprehension or a full review. Missing text remains available in Extracted text.'}
+            'roles': roles, 'note': 'Source spans are deduplicated; previews remain distinct from full passages. Successful response confirms submission, not comprehension or a full review.'}
