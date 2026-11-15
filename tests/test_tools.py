@@ -1,81 +1,64 @@
+"""Only two bounded, model-callable retrieval functions are exposed."""
 import pytest
 
-from tools import (ToolError, check_quote, execute_tool, get_evidence, list_pages,
-                   read_page, search_paper, tool_definitions)
+from tools import ToolError, execute_tool, get_evidence, search_paper, tool_definitions
 from workflow import initial_state
 
 
 def paper():
-    return initial_state('What evidence supports the result?', {
-        1: 'Our sorting study uses a small dataset.\nThe result was measured on one machine.',
-        2: 'The baseline was insertion sort. Accuracy was not measured.\nMore tests are needed.',
-    })
+    return initial_state('What supports the result?', {
+        1: 'Our sorting study uses a small dataset. The result used one machine.',
+        2: 'The baseline was insertion sort. Accuracy was not measured.'})
 
 
 def test_keyword_search_and_exact_evidence():
     state = paper()
-    result = search_paper(state, 'BASELINE insertion')
-    match = result['matches'][0]
+    match = search_paper(state, 'BASELINE insertion')['matches'][0]
     assert match['page'] == 2
     assert match == get_evidence(state, match['evidence_id'])
-    assert match['text'] == state['pages'][2]
-    assert search_paper(state, 'nonexistentkeyword')['matches'] == []
-    # Deliberately lexical, with no claim of semantic matching.
-    assert search_paper(state, 'computer')['matches'] == []
-    assert len(list_pages(state)['pages']) == 2
-    assert read_page(state, 1)['evidence'][0]['evidence_id'] == 'E0001'
+    assert match['text'] == state['pages'][2][match['start']:match['end']]
+    match['text'] = 'changed copy'
+    assert get_evidence(state, 'E0002')['text'] == state['pages'][2]
+    assert search_paper(state, 'computer')['matches'] == []  # No paraphrase matching.
 
 
-def test_quote_whitespace_normalization_is_case_sensitive():
-    state = paper()
-    assert check_quote(state, 1, 'dataset.   \n The result')['found'] is True
-    assert check_quote(state, 1, 'the result')['found'] is False
-    assert check_quote(state, 2, 'invented quote')['found'] is False
-
-
-@pytest.mark.parametrize('page', [0, -1, 3, True, '1'])
-def test_invalid_pages(page):
-    with pytest.raises(ToolError):
-        read_page(paper(), page)
-    with pytest.raises(ToolError):
-        check_quote(paper(), page, 'quote')
+@pytest.mark.parametrize('role', ['reader', 'analyst', 'writer', 'reviewer'])
+def test_only_two_tool_schemas_and_dispatch_entries(role):
+    definitions = tool_definitions(role)
+    assert {item['function']['name'] for item in definitions} == {'search_paper', 'get_evidence'}
+    for item in definitions:
+        schema = item['function']['parameters']
+        assert schema['additionalProperties'] is False
+        assert schema['required'] == list(schema['properties'])
+        assert 'state' not in schema['properties']
+    assert execute_tool(role, 'get_evidence', {'evidence_id': 'E0001'}, paper())['page'] == 1
+    for obsolete in ['list_pages', 'read_page', 'check_quote', 'get_findings', 'eval']:
+        with pytest.raises(ToolError, match='allowlist'):
+            execute_tool(role, obsolete, {}, paper())
 
 
 @pytest.mark.parametrize('role,name,args', [
-    ('writer', 'read_page', {'page_number': 1}),
-    ('investigator', 'get_evidence', {'evidence_id': 'E0001'}),
-    ('reviewer', 'search_paper', {'query': 'sort'}),
-    ('investigator', 'delete_file', {}),
-    ('methods', 'read_page', {'page_number': True}),
-    ('methods', 'read_page', {'page_number': 99}),
-    ('methods', 'read_page', {'page_number': 1, 'api_key': 'do-not-log'}),
-    ('methods', 'read_page', {}),
-    ('methods', 'search_paper', {'query': ''}),
-    ('methods', 'search_paper', {'query': 'x' * 161}),
-    ('methods', 'search_paper', {'query': '!!!'}),
-    ('methods', 'get_evidence', {'evidence_id': 'E9999'}),
-    ('reviewer', 'check_quote', {'page_number': 1, 'quote': ' '}),
+    ('unknown', 'search_paper', {'query': 'sort'}),
+    ('reader', 'search_paper', {}),
+    ('reader', 'search_paper', {'query': 'sort', 'extra': 1}),
+    ('analyst', 'search_paper', {'query': ''}),
+    ('analyst', 'search_paper', {'query': 1}),
+    ('analyst', 'search_paper', {'query': 'x' * 161}),
+    ('analyst', 'search_paper', {'query': '!!!'}),
+    ('reviewer', 'get_evidence', {'evidence_id': 'E9999'}),
+    ('reviewer', 'get_evidence', {'evidence_id': True}),
+    ('writer', 'get_evidence', {'evidence_id': 'E0001', 'page_number': 99}),
 ])
-def test_allowlists_and_argument_validation(role, name, args):
+def test_arguments_and_unknown_evidence(role, name, args):
     with pytest.raises(ToolError):
         execute_tool(role, name, args, paper())
 
 
-def test_tool_schemas_have_no_implicit_state_argument():
-    definitions = tool_definitions('reviewer')
-    assert {tool['function']['name'] for tool in definitions} == {'read_page', 'get_evidence', 'check_quote'}
-    for definition in definitions:
-        schema = definition['function']['parameters']
-        assert schema['additionalProperties'] is False
-        assert 'state' not in schema['properties']
-
-
-def test_large_page_and_search_results_are_bounded_and_explicit():
-    state = initial_state('Analyze.', {1: 'sort ' * 1500})
-    page = read_page(state, 1)
-    assert page['partial_page'] is True
-    assert len(page['text']) == 4000
-    assert page['remaining_evidence_ids']
-    search = search_paper(state, 'sort')
-    assert len(search['matches']) == 4
-    assert all(len(entry['text']) <= 800 for entry in search['matches'])
+def test_search_bounds_ranking_and_tie_order():
+    state = initial_state('Analyze.', {1: 'sort ' * 1500, 2: 'sort baseline'})
+    results = search_paper(state, 'sort baseline')
+    assert results['matches'][0]['page'] == 2
+    assert len(results['matches']) == 4
+    assert results['total_matches'] > 4
+    assert [entry['start'] for entry in results['matches'][1:]] == [0, 800, 1600]
+    assert all(len(entry['text']) <= 800 for entry in results['matches'])

@@ -1,2 +1,2 @@
-"""Vercel file-based WSGI entrypoint; use the same application as local Python."""
-from app import application as app
+"""Vercel file-based ASGI entrypoint; exports the same FastAPI app as Uvicorn."""
+from app import app

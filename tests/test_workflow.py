@@ -1,14 +1,15 @@
-"""Scripted SDK responses exercise the real compiled graph and tool dispatcher."""
-
+"""Mock the SDK, not the graph: exercise every real node and the actual tools."""
 import json
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
 import pytest
 
-from agents import Limits
+from agents import DRAFT_TOPICS, Limits
 from llm import RunError, sanitize
 from workflow import build_graph, initial_state
+
+ROLES = ['reader', 'analyst', 'writer', 'reviewer']
 
 
 def source_state():
@@ -28,128 +29,152 @@ def tool(name, args, call_id='chosen-call'):
 
 def findings(statement='Original finding', evidence_id='E0001', writer=False):
     result = {'findings': [{'topic': 'Contribution', 'statement': statement,
-                          'kind': 'author_statement', 'evidence_ids': [evidence_id]}],
-              'uncertainties': ['Only the supplied passages were inspected.']}
+                           'kind': 'author_statement', 'evidence_ids': [evidence_id]}],
+              'uncertainties': ['Only selected passages were inspected.']}
     if writer:
-        result['findings'] = [dict(result['findings'][0], topic=topic) for topic in
-                              ['Answer', 'Contributions', 'Methods and evidence', 'Limitations']]
-        result['follow_up_questions'] = ['Could a larger experiment test this result?']
+        result['findings'] = [dict(result['findings'][0], topic=topic) for topic in DRAFT_TOPICS]
     return result
 
 
-def review(target=None, issue='Correct the unsupported comparison.'):
-    return {'correction_required': target is not None, 'target': target,
-            'issues': [{'statement': issue, 'evidence_ids': ['E0002']}] if target else [],
-            'uncertainties': ['Limited experimental coverage.']}
+def review(target=None, issue='The comparison goes beyond the reported experiment.'):
+    concerns = [] if target is None else [{
+        'target': target, 'category': 'unsupported comparison', 'concern': issue,
+        'evidence_ids': ['E0002'], 'suggested_clarification': 'Limit the conclusion to the reported experiment.',
+        'affected_statement': 'Original finding' if target == 'report' else None}]
+    return {'overall_assessment': 'Limited inspection; no concrete concerns found.' if not concerns else
+            'Specific concerns remain; the explanation is not corrected.',
+            'concerns': concerns, 'uncertainties': ['Limited experimental coverage.']}
 
 
 def visit(role, output=None):
-    name, args = {
-        'investigator': ('search_paper', {'query': 'sorting contribution'}),
-        'methods': ('read_page', {'page_number': 2}),
-        'reviewer': ('get_evidence', {'evidence_id': 'E0002'}),
-        'writer': ('get_findings', {}),
-    }[role]
     if output is None:
         output = review() if role == 'reviewer' else findings(
-            evidence_id='E0002' if role == 'methods' else 'E0001', writer=role == 'writer')
+            evidence_id='E0002' if role == 'analyst' else 'E0001', writer=role == 'writer')
+    if role == 'writer':  # Writer can finish using direct state, without a tool.
+        return [response(output)]
+    name, args = ('search_paper', {'query': 'sorting contribution'}) if role == 'reader' else (
+        'get_evidence', {'evidence_id': 'E0002'})
     return [response(calls=[tool(name, args)]), response(output)]
 
 
-def run(outputs, limits=None):
+def run(outputs, limits=None, state=None):
     client = Mock()
     client.api_key = 'mock-only'
     client.chat.completions.create.side_effect = outputs
-    result = build_graph(client, 'openai/gpt-oss-20b', limits).invoke(source_state())
+    result = build_graph(client, 'openai/gpt-oss-20b', limits).invoke(state or source_state())
     return result, client
 
 
-def approval():
-    return sum((visit(role) for role in ['investigator', 'methods', 'reviewer', 'writer']), [])
+def complete_run(review_output=None):
+    return sum((visit(role, review_output if role == 'reviewer' else None) for role in ROLES), [])
 
 
-def test_approval_route_and_function_call_message_pairing():
-    state, client = run(approval())
+def test_fixed_graph_four_roles_reviewer_last_and_tool_message_pairing():
+    state, client = run(complete_run())
     assert state['status'] == 'complete'
-    assert [v['agent'] for v in state['visits']] == ['investigator', 'methods', 'reviewer', 'writer']
-    assert state['model_calls'] == client.chat.completions.create.call_count == 8
-    assert state['tool_calls'] == 4
-    assert state['correction_count'] == 0
-    assert '[E0001 · PDF page 1]' in state['final_report']
+    assert [v['agent'] for v in state['visits']] == ROLES
+    assert state['model_calls'] == client.chat.completions.create.call_count == 7
+    assert state['tool_calls'] == 3
+    assert '[E0001 · PDF page 1]' in state['final_output']
+    assert not ({'correction_count', 'correction_history', 'reviews', 'next_agent', 'review'} & state.keys())
     second = client.chat.completions.create.call_args_list[1].kwargs
     assistant, reply = second['messages'][-2:]
-    assert assistant['role'] == 'assistant'
     assert assistant['tool_calls'][0]['id'] == reply['tool_call_id'] == 'chosen-call'
-    assert reply['role'] == 'tool'
+    assert assistant['role'] == 'assistant' and reply['role'] == 'tool'
     assert json.loads(reply['content'])['matches'][0]['evidence_id'] == 'E0001'
-    assert all('response_format' not in call.kwargs for call in client.chat.completions.create.call_args_list)
-    assert all(call.kwargs['model'] == 'openai/gpt-oss-20b' for call in client.chat.completions.create.call_args_list)
-    # Initial prompts contain context, not the full original paper.
-    initial_prompt = client.chat.completions.create.call_args_list[0].kwargs['messages'][1]['content']
-    assert 'A sorting comparison is the contribution.' not in initial_prompt
+    for call in client.chat.completions.create.call_args_list:
+        assert 'response_format' not in call.kwargs
+        assert call.kwargs['model'] == 'openai/gpt-oss-20b'
+        assert {item['function']['name'] for item in call.kwargs['tools']} == {'search_paper', 'get_evidence'}
+    assert 'A sorting comparison is the contribution.' not in second['messages'][1]['content']
     assert 'reasoning' not in json.dumps(state['events'])
+    edges = {(edge.source, edge.target) for edge in build_graph(client, 'model').get_graph().edges}
+    assert edges == set(zip(['__start__', *ROLES], [*ROLES, '__end__']))
 
 
-@pytest.mark.parametrize('target,expected', [
-    ('investigator', ['investigator', 'methods', 'reviewer', 'investigator', 'methods', 'reviewer', 'writer']),
-    ('methods', ['investigator', 'methods', 'reviewer', 'methods', 'reviewer', 'writer']),
-])
-def test_correction_routes_replace_stale_findings(target, expected):
-    outputs = visit('investigator') + visit('methods') + visit('reviewer', review(target))
-    if target == 'investigator':
-        outputs += visit('investigator', findings('Corrected investigator conclusion'))
-    outputs += visit('methods', findings('Fresh methods conclusion', 'E0002'))
-    outputs += visit('reviewer') + visit('writer')
+def test_previous_findings_and_draft_pass_directly_in_state():
+    state, client = run(complete_run())
+    calls = client.chat.completions.create.call_args_list
+    analyst = json.loads(calls[2].kwargs['messages'][1]['content'])
+    writer = json.loads(calls[4].kwargs['messages'][1]['content'])
+    reviewer = json.loads(calls[5].kwargs['messages'][1]['content'])
+    assert analyst['reader_findings'] == state['reader_findings']
+    assert writer['reader_findings'] == reviewer['reader_findings'] == state['reader_findings']
+    assert writer['analyst_findings'] == reviewer['analyst_findings'] == state['analyst_findings']
+    assert reviewer['report_draft'] == state['report_draft']
+    assert reviewer['question'] == state['question']
+    assert not any('pages' in context or 'evidence' in context for context in (analyst, writer, reviewer))
+
+
+@pytest.mark.parametrize('target', ['paper', 'report'])
+def test_final_concerns_preserved_without_rewrite(target):
+    state, client = run(complete_run(review(target)))
+    assert state['status'] == 'complete'
+    assert state['critical_review'] == review(target)
+    assert state['report_draft'] == findings(writer=True)  # No post-review rewrite.
+    assert state['model_calls'] == client.chat.completions.create.call_count == 7
+    for text in [f'{target.upper()} concern', review(target)['concerns'][0]['concern'],
+                 'Suggested clarification', 'Referenced source passages', 'Limited experimental coverage.']:
+        assert text in state['final_output']
+    if target == 'report':
+        assert 'Affected draft statement:** Original finding' in state['final_output']
+
+
+def test_missing_information_concern_does_not_need_fake_evidence():
+    output = review('paper')
+    output['concerns'][0]['evidence_ids'] = []
+    state, _ = run(complete_run(output))
+    assert state['status'] == 'complete'
+
+
+@pytest.mark.parametrize('role', ['reader', 'analyst', 'reviewer'])
+def test_empty_search_alone_cannot_satisfy_required_inspection(role):
+    prefix = sum((visit(previous) for previous in ROLES[:ROLES.index(role)]), [])
+    output = review() if role == 'reviewer' else findings()
+    state, _ = run(prefix + [response(calls=[tool('search_paper', {'query': 'zzznomatch'})]), response(output)])
+    assert state['status'] == 'incomplete'
+    assert 'inspect original source' in state['error']
+    assert state['visits'][-1]['agent'] == role
+    assert not state['critical_review']
+    if role == 'reviewer':
+        assert state['report_draft']
+        assert 'did not receive a completed final critical review' in state['final_output']
+
+
+def test_empty_search_can_be_followed_by_nonempty_source_within_budget():
+    state, _ = run([response(calls=[tool('search_paper', {'query': 'zzznomatch'}, 'empty')]),
+                   response(calls=[tool('get_evidence', {'evidence_id': 'E0001'}, 'source')]),
+                   response(findings())] + visit('analyst') + visit('writer') + visit('reviewer'))
+    assert state['status'] == 'complete'
+    assert state['model_calls'] == 8 and state['tool_calls'] == 4
+
+
+def test_two_tools_count_separately_and_pair_correctly():
+    state, client = run([response(calls=[tool('search_paper', {'query': 'sorting'}, 'search'),
+                       tool('get_evidence', {'evidence_id': 'E0001'}, 'read')]), response(findings())]
+                       + visit('analyst') + visit('writer') + visit('reviewer'))
+    assert state['status'] == 'complete' and state['tool_calls'] == 4
+    request = client.chat.completions.create.call_args_list[1].kwargs
+    assert request['tool_choice'] == 'none'
+    assert [message['tool_call_id'] for message in request['messages'][-2:]] == ['search', 'read']
+
+
+def test_maximum_path_is_twelve_requests_eight_tools_no_extra_visits():
+    outputs = []
+    for role in ROLES:
+        outputs += [response(calls=[tool('get_evidence', {'evidence_id': 'E0001'}, 'first')]),
+                    response(calls=[tool('get_evidence', {'evidence_id': 'E0002'}, 'second')]),
+                    response(review() if role == 'reviewer' else findings(writer=role == 'writer'))]
     state, client = run(outputs)
     assert state['status'] == 'complete'
-    assert [v['agent'] for v in state['visits']] == expected
-    assert state['correction_count'] == 1
-    assert state['correction_history'][0]['target'] == target
-    assert state['correction_history'][0]['previous_methods']['findings'][0]['statement'] == 'Original finding'
-    assert state['methods_findings']['findings'][0]['statement'] == 'Fresh methods conclusion'
-    if target == 'investigator':
-        assert state['investigator_findings']['findings'][0]['statement'] == 'Corrected investigator conclusion'
-    # Before the corrective visit, the count is already incremented.
-    corrected_context = json.loads(client.chat.completions.create.call_args_list[6].kwargs['messages'][1]['content'])
-    assert corrected_context['correction_count'] == 1
-    assert state['model_calls'] == len(expected) * 2
-
-
-def test_second_reviewer_request_never_starts_second_correction():
-    outputs = (visit('investigator') + visit('methods') + visit('reviewer', review('methods'))
-               + visit('methods', findings('Corrected method', 'E0002'))
-               + visit('reviewer', review('investigator', 'Still unresolved: unsupported claim.'))
-               + visit('writer'))
-    state, _ = run(outputs)
-    assert state['status'] == 'complete'
-    assert len(state['reviews']) == 2
-    assert state['correction_count'] == 1
-    assert len(state['visits']) == 6
-    assert state['visits'][-1]['agent'] == 'writer'
-    assert 'Still unresolved: unsupported claim.' in state['final_report']
-    assert 'correction limit reached' in state['final_report']
-
-
-def test_two_tools_in_one_response_count_separately_and_pair_correctly():
-    outputs = [response(calls=[tool('list_pages', {}, 'pages'),
-                              tool('read_page', {'page_number': 1}, 'read')]), response(findings())]
-    outputs += visit('methods') + visit('reviewer') + visit('writer')
-    state, client = run(outputs)
-    assert state['status'] == 'complete'
-    assert state['tool_calls'] == 5
-    second = client.chat.completions.create.call_args_list[1].kwargs
-    assert second['tool_choice'] == 'none'
-    assert [m['tool_call_id'] for m in second['messages'][-2:]] == ['pages', 'read']
-    assert state['visits'][0]['tool_calls'] == 2
+    assert state['model_calls'] == client.chat.completions.create.call_count == 12
+    assert state['tool_calls'] == 8
 
 
 def test_per_visit_budget_stops_without_extra_requests():
-    outputs = [response(calls=[tool('read_page', {'page_number': 1}, 'first')]),
-               response(calls=[tool('read_page', {'page_number': 2}, 'second')]),
-               response(calls=[tool('list_pages', {}, 'forbidden-third')])]
+    outputs = [response(calls=[tool('get_evidence', {'evidence_id': 'E0001'}, str(n))]) for n in range(3)]
     state, client = run(outputs)
     assert state['status'] == 'incomplete'
-    assert state['final_report'] == ''
     assert state['model_calls'] == client.chat.completions.create.call_count == 3
     assert state['tool_calls'] == 2
     assert 'budget' in state['error']
@@ -157,120 +182,139 @@ def test_per_visit_budget_stops_without_extra_requests():
 
 
 def test_oversized_tool_batch_is_rejected_before_execution():
-    state, _ = run([response(calls=[tool('list_pages', {}, str(n)) for n in range(3)])])
+    state, _ = run([response(calls=[tool('search_paper', {'query': 'sort'}, str(n)) for n in range(3)])])
     assert state['status'] == 'incomplete'
-    assert state['model_calls'] == 1
     assert state['tool_calls'] == 0
 
 
-def test_total_budget_preserves_completed_findings():
-    state, client = run(approval(), Limits(total_model_calls=4))
+def test_total_budget_preserves_findings_and_draft():
+    state, client = run(complete_run(), Limits(total_model_calls=5))
     assert state['status'] == 'incomplete'
     assert 'Total model-request budget exhausted' in state['error']
-    assert state['model_calls'] == client.chat.completions.create.call_count == 4
-    assert state['investigator_findings'] and state['methods_findings']
-    assert state['final_report'] == ''
+    assert state['model_calls'] == client.chat.completions.create.call_count == 5
+    assert state['reader_findings'] and state['analyst_findings'] and state['report_draft']
+    assert not state['critical_review']
+    assert 'unreviewed draft' in state['final_output']
 
 
 @pytest.mark.parametrize('kwargs', [{'model_per_visit': 4}, {'tools_per_visit': 3},
-                                  {'total_model_calls': 25}, {'tools_per_visit': True},
-                                  {'output_tokens': 100}, {'total_model_calls': 0}])
-def test_configurable_limits_cannot_exceed_hard_caps(kwargs):
+    {'total_model_calls': 25}, {'tools_per_visit': True}, {'output_tokens': 100}, {'total_model_calls': 0}])
+def test_limits_cannot_exceed_hard_caps(kwargs):
     with pytest.raises(RunError):
         Limits(**kwargs)
 
 
 @pytest.mark.parametrize('decision', [
-    'not JSON', '[]',
-    {'correction_required': 'false', 'target': None, 'issues': [], 'uncertainties': []},
-    {'correction_required': True, 'target': 'writer', 'issues': [], 'uncertainties': []},
-    {'correction_required': False, 'target': 'methods', 'issues': [], 'uncertainties': []},
-    {'correction_required': True, 'target': 'methods', 'issues': [], 'uncertainties': []},
-    {'correction_required': False, 'target': None, 'issues': [], 'uncertainties': [], 'extra': 1},
-    '{"correction_required": false, "correction_required": true}',
+    'not JSON', '[]', {'overall_assessment': 'Fine', 'concerns': False, 'uncertainties': []},
+    dict(review(), extra=1), {'overall_assessment': '', 'concerns': [], 'uncertainties': []},
+    '{"concerns": [], "concerns": []}',
+    dict(review(), concerns=[dict(review('report')['concerns'][0], target='writer')]),
+    dict(review(), concerns=[dict(review('report')['concerns'][0], affected_statement='invented draft statement')]),
+    dict(review(), concerns=[dict(review('paper')['concerns'][0], affected_statement='not null')]),
+    dict(review(), concerns=[dict(review('paper')['concerns'][0], evidence_ids=['E9999'])]),
 ])
-def test_malformed_review_is_never_approved(decision):
-    state, client = run(visit('investigator') + visit('methods') + visit('reviewer', decision))
+def test_malformed_review_preserves_draft_but_cannot_complete(decision):
+    state, client = run(complete_run(decision))
     assert state['status'] == 'incomplete'
-    assert state['final_report'] == ''
-    assert state['model_calls'] == client.chat.completions.create.call_count == 6
+    assert state['report_draft'] and not state['critical_review']
+    assert state['model_calls'] == client.chat.completions.create.call_count == 7
     assert state['visits'][-1]['agent'] == 'reviewer'
-    assert state['investigator_findings']
+    assert 'did not receive a completed final critical review' in state['final_output']
 
 
 @pytest.mark.parametrize('writer_output', [
-    findings('Claim with invalid source.', 'E9999', writer=True),
+    findings('Invalid source.', 'E9999', writer=True),
     findings('A claim on [PDF page 99].', writer=True),
     findings('A mismatched citation [E0001 · PDF page 2].', writer=True),
 ])
-def test_final_report_rejects_nonexistent_sources_or_pages(writer_output):
-    state, _ = run(visit('investigator') + visit('methods') + visit('reviewer')
-                   + visit('writer', writer_output))
-    assert state['status'] == 'incomplete'
-    assert state['final_report'] == ''
-    assert state['review']
+def test_draft_rejects_unknown_evidence_or_invalid_pages(writer_output):
+    state, _ = run(visit('reader') + visit('analyst') + visit('writer', writer_output))
+    assert state['status'] == 'incomplete' and not state['report_draft']
+    assert state['visits'][-1]['agent'] == 'writer'
 
 
-def test_disallowed_tool_and_arguments_never_appear_in_trace():
-    state, _ = run([response(calls=[tool('get_findings', {'api_key': 'gsk_should_not_display'})])])
-    assert state['status'] == 'incomplete'
-    assert state['tool_calls'] == 0
-    assert 'gsk_should_not_display' not in json.dumps(state['events'])
+def test_evidence_must_match_exact_extracted_source():
+    state = source_state()
+    state['evidence']['E0001']['text'] = 'fabricated passage'
+    result, _ = run([response(calls=[tool('get_evidence', {'evidence_id': 'E0001'})])], state=state)
+    assert result['status'] == 'incomplete'
+    assert 'does not match' in result['error']
 
 
-def test_final_without_source_inspection_is_incomplete():
+@pytest.mark.parametrize('name,args', [
+    ('get_findings', {}), ('read_page', {'page_number': 1}), ('search_paper', {'query': 'sort', 'key': 'secret'}),
+    ('get_evidence', {'evidence_id': 'E9999'})])
+def test_disallowed_tools_and_arguments_are_not_executed_or_logged(name, args):
+    state, _ = run([response(calls=[tool(name, args)])])
+    assert state['status'] == 'incomplete' and state['tool_calls'] == 0
+    assert not any(event['kind'] == 'tool_executed' for event in state['events'])
+
+
+def test_final_without_source_is_incomplete():
     state, _ = run([response(findings())])
-    assert state['status'] == 'incomplete'
-    assert 'inspect original source' in state['error']
-    assert state['model_calls'] == 1
+    assert state['status'] == 'incomplete' and 'inspect original source' in state['error']
 
 
-def test_incomplete_model_output_stops_without_retry():
+def test_truncated_response_stops_without_retry():
     state, client = run([response('partial', finish='length')])
-    assert state['status'] == 'incomplete'
-    assert 'truncated' in state['error']
+    assert state['status'] == 'incomplete' and 'truncated' in state['error']
     assert client.chat.completions.create.call_count == 1
 
 
-def test_redaction_applies_recursively():
+def test_redaction_is_recursive():
     assert sanitize({'arguments': ['gsk_abc123', 'custom-secret']}, 'custom-secret') == {
         'arguments': ['[REDACTED]', '[REDACTED]']}
 
 
-def test_one_request_visit_budget_cannot_silently_add_follow_up():
-    state, client = run(approval(), Limits(model_per_visit=1))
-    assert state['status'] == 'incomplete'
-    assert state['model_calls'] == client.chat.completions.create.call_count == 1
-    assert state['tool_calls'] == 0
+def test_one_request_visit_limit_does_not_add_follow_up():
+    state, client = run(complete_run(), Limits(model_per_visit=1))
+    assert state['status'] == 'incomplete' and state['tool_calls'] == 0
+    assert client.chat.completions.create.call_count == 1
 
 
-def test_duplicate_call_ids_are_rejected_before_any_tool_runs():
-    state, _ = run([response(calls=[tool('read_page', {'page_number': 1}),
-                                  tool('read_page', {'page_number': 2})])])
-    assert state['status'] == 'incomplete'
-    assert state['tool_calls'] == 0
+def test_duplicate_tool_ids_rejected_before_execution():
+    state, _ = run([response(calls=[tool('search_paper', {'query': 'sort'}),
+                                  tool('get_evidence', {'evidence_id': 'E0001'})])])
+    assert state['status'] == 'incomplete' and state['tool_calls'] == 0
     assert 'duplicate tool-call ID' in state['error']
 
 
-def test_rate_limit_is_safe_and_preserves_partial_results():
+@pytest.mark.parametrize('kind', ['rate', 'connection', 'authentication', 'model'])
+def test_provider_errors_are_safe_and_preserve_draft(kind):
     import groq
     import httpx
-
-    error = groq.RateLimitError('raw-provider-body-must-not-display',
-        response=httpx.Response(429, request=httpx.Request('POST', 'https://example.invalid')),
-        body={})
-    state, client = run(visit('investigator') + [error])
+    request = httpx.Request('POST', 'https://example.invalid')
+    error = groq.APIConnectionError(request=request) if kind == 'connection' else {
+        'rate': groq.RateLimitError, 'authentication': groq.AuthenticationError,
+        'model': groq.BadRequestError}[kind]('raw-provider-body-must-not-display',
+            response=httpx.Response(429 if kind == 'rate' else 400, request=request), body={})
+    state, client = run(visit('reader') + visit('analyst') + visit('writer') + [error])
     assert state['status'] == 'incomplete'
-    assert state['investigator_findings']
-    assert state['model_calls'] == client.chat.completions.create.call_count == 3
-    assert 'quota/rate limit' in state['error']
+    assert state['report_draft'] and not state['critical_review']
+    assert state['model_calls'] == client.chat.completions.create.call_count == 6
     assert 'raw-provider-body' not in json.dumps(state)
+    assert 'completed final critical review' in state['final_output']
 
 
 def test_client_factory_disables_sdk_retries(monkeypatch):
     import llm
-
     constructor = Mock()
     monkeypatch.setattr(llm.groq, 'Groq', constructor)
     llm.make_client('mock-only')
     constructor.assert_called_once_with(api_key='mock-only', max_retries=0, timeout=60.0)
+
+
+def test_runtime_tool_failure_preserves_draft(monkeypatch):
+    import agents
+    original = agents.execute_tool
+    def fail_reviewer(role, name, arguments, state):
+        if role == 'reviewer':
+            from tools import ToolError
+            raise ToolError('Source lookup failed. Run incomplete.')
+        return original(role, name, arguments, state)
+    monkeypatch.setattr(agents, 'execute_tool', fail_reviewer)
+    result, client = run(complete_run())
+    assert result['status'] == 'incomplete' and result['report_draft']
+    assert result['critical_review'] == {}
+    assert client.chat.completions.create.call_count == 6
+    assert 'Source lookup failed' in result['error']

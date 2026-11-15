@@ -1090,3 +1090,14 @@ body.is-running #setup-section {
     scroll-behavior: auto !important;
   }
 }
+
+/* The final critique remains distinct from the unchanged explanation draft. */
+.critical-review { border-top: 2px solid var(--accent, #963e31); }
+.review-concern { margin: 20px 0; padding: 0 0 4px 16px; border-left: 2px solid #b9aea0; }
+.concern-report { border-left-color: #963e31; }
+.review-concern h3 { font: 600 12px Arial, sans-serif; letter-spacing: .04em; }
+.review-concern p { line-height: 1.65; overflow-wrap: anywhere; }
+.affected-statement { font-style: italic; }
+.report-warning { border: 1px solid #b97e70; padding: 16px; margin: 20px 0; color: #783b30; }
+.report-warning p { margin-bottom: 0; }
+.draft-title { font: normal 24px Georgia, serif; margin-top: 28px; }

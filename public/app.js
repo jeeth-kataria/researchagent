@@ -3,12 +3,17 @@
 // All paper/model text enters the document through textContent, never innerHTML.
 const $ = (id) => document.getElementById(id);
 const roles = {
-  investigator: "Paper investigator",
-  methods: "Methods analyst",
-  reviewer: "Critical reviewer",
-  writer: "Report writer",
+  reader: "Paper Reader",
+  analyst: "Evidence Analyst",
+  writer: "Report Writer",
+  reviewer: "Critical Reviewer",
 };
-const storageKey = "research-desk.run.v1";
+const roleFields = {reader: "reader_findings", analyst: "analyst_findings",
+  writer: "report_draft", reviewer: "critical_review"};
+const draftTopics = ["Problem and proposed approach", "Main contributions",
+  "Experimental evidence", "Limitations and missing information"];
+// Old correction-workflow records have a different shape and are not restored.
+const storageKey = "research-desk.run.v2";
 let run = null;
 let running = false;
 let selectedFile = null;
@@ -105,102 +110,81 @@ function listSection(title, number, values) {
   block.append(list);
   return block;
 }
+function concernNode(concern) {
+  const block = element("article", `review-concern concern-${concern.target}`);
+  block.append(element("h3", "accent", `${concern.target.toUpperCase()} / ${concern.category}`));
+  if (concern.affected_statement)
+    block.append(element("p", "affected-statement", `Affected draft statement: ${concern.affected_statement}`));
+  block.append(element("p", "", concern.concern));
+  const refs = element("div", "finding-meta");
+  concern.evidence_ids.forEach((id) => refs.append(citation(id)));
+  block.append(refs, element("p", "small", `Suggested clarification: ${concern.suggested_clarification}`));
+  return block;
+}
+function allUncertainties(state) {
+  return [...new Set(Object.values(roleFields).flatMap((field) => state[field]?.uncertainties || []))];
+}
+function reviewSection(state) {
+  const block = section("Final critical review", "05");
+  block.classList.add("critical-review");
+  const review = state.critical_review;
+  if (review?.overall_assessment) {
+    block.append(element("p", "", review.overall_assessment));
+    review.concerns.forEach((concern) => block.append(concernNode(concern)));
+    if (!review.concerns.length)
+      block.append(element("p", "", "No concrete concerns returned after limited inspection. This is not scientific approval."));
+  } else {
+    block.append(element("p", "", state.status === "running"
+      ? "Awaiting the final reviewer. The explanation remains a draft."
+      : "Final critical review did not complete. The draft did not receive a completed review."));
+  }
+  return block;
+}
 function renderReport() {
   const host = $("report-content");
   host.replaceChildren();
   const state = run.state;
   if (state.status !== "complete") {
-    const empty = element("div", "empty-state");
-    empty.append(
-      element(
-        "h2",
-        "",
-        state.status === "incomplete"
-          ? "The investigation paused."
-          : "The paper is being examined.",
-      ),
-    );
-    empty.append(
-      element(
-        "p",
-        "",
-        state.status === "incomplete"
-          ? state.error
-          : "Findings and source passages will appear as the team works. The report is written after the review.",
-      ),
-    );
+    const notice = element("div", "empty-state");
+    notice.append(element("h2", "", state.status === "incomplete"
+      ? "Incomplete investigation" : "The paper is being examined."));
+    notice.append(element("p", "", state.status === "incomplete" ? state.error
+      : "Reader → Analyst → Writer → Critical Reviewer. Available results appear below."));
     if (state.status === "incomplete")
-      empty.append(
-        element(
-          "p",
-          "",
-          "Available findings are preserved below and in Team notes. No completed report was produced.",
-        ),
-      );
-    host.append(empty);
-    for (const role of ["investigator", "methods"]) {
-      const output = state[`${role}_findings`];
+      notice.append(element("p", "", "Available findings are preserved. Any draft below did not receive a completed final critical review."));
+    host.append(notice);
+  }
+  const reportConcerns = state.critical_review?.concerns?.filter((item) => item.target === "report") || [];
+  if (reportConcerns.length) {
+    const warning = element("div", "report-warning");
+    warning.append(element("strong", "", "The final reviewer flagged statements in this draft."));
+    warning.append(element("p", "", "Read the REPORT concerns below before relying on the explanation. The draft has not been rewritten or corrected."));
+    host.append(warning);
+  }
+  const draft = state.report_draft;
+  if (draft?.findings?.length) {
+    host.append(element("h2", "draft-title", "Paper explanation — report draft"));
+    draftTopics.forEach((topic, index) => {
+      const block = section(topic, String(index + 1).padStart(2, "0"));
+      draft.findings.filter((finding) => finding.topic === topic)
+        .forEach((finding) => block.append(findingNode(finding)));
+      host.append(block);
+    });
+  } else {
+    for (const role of ["reader", "analyst"]) {
+      const output = state[roleFields[role]];
       if (output?.findings?.length) {
-        const block = section(
-          `${roles[role]} — available findings`,
-          role === "investigator" ? "01" : "02",
-        );
-        output.findings.forEach((finding) =>
-          block.append(findingNode(finding)),
-        );
+        const block = section(`${roles[role]} — available findings`, "—");
+        output.findings.forEach((finding) => block.append(findingNode(finding)));
         host.append(block);
       }
     }
-    return;
   }
-  const output = state.writer_findings;
-  ["Answer", "Contributions", "Methods and evidence", "Limitations"].forEach(
-    (topic, index) => {
-      const block = section(topic, String(index + 1).padStart(2, "0"));
-      output.findings
-        .filter((finding) => finding.topic === topic)
-        .forEach((finding) => block.append(findingNode(finding)));
-      host.append(block);
-    },
-  );
-  host.append(
-    listSection(
-      "Follow-up questions — proposals",
-      "05",
-      output.follow_up_questions.length
-        ? output.follow_up_questions
-        : ["No follow-up proposals were produced."],
-    ),
-  );
-  const uncertainties = [
-    ...new Set([
-      ...(output.uncertainties || []),
-      ...(state.review.uncertainties || []),
-      ...(state.investigator_findings.uncertainties || []),
-      ...(state.methods_findings.uncertainties || []),
-    ]),
-  ];
-  if (uncertainties.length)
-    host.append(listSection("Remaining uncertainties", "06", uncertainties));
-  if (state.review.issues?.length) {
-    const block = section(
-      state.review.correction_required
-        ? "Unresolved reviewer concerns"
-        : "Reviewer concerns",
-      "07",
-    );
-    state.review.issues.forEach((issue) =>
-      block.append(findingNode({ ...issue, kind: "reviewer_concern" })),
-    );
-    host.append(block);
-  }
-  host.append(
-    element(
-      "p",
-      "report-disclaimer",
-      "The report uses only the uploaded paper. All four roles share the same model; their agreement is not scientific verification. The writer’s report has not received another reviewer pass.",
-    ),
-  );
+  host.append(reviewSection(state));
+  const uncertainties = allUncertainties(state);
+  host.append(listSection("Remaining uncertainties", "06", uncertainties.length ? uncertainties
+    : ["No additional uncertainties listed; this is not proof of completeness."]));
+  host.append(element("p", "report-disclaimer", "Only the uploaded paper was examined. All four roles share one model. Exact evidence references do not guarantee semantic correctness. The final reviewer critiques the paper and the draft; no agent rewrites the draft afterward."));
 }
 function jsonDetails(title, value) {
   const details = element("details");
@@ -213,54 +197,25 @@ function jsonDetails(title, value) {
 function renderTeam() {
   const host = $("team-content");
   host.replaceChildren();
-  for (const role of ["investigator", "methods", "reviewer", "writer"]) {
+  for (const role of Object.keys(roles)) {
     const block = element("section", "team-section");
     block.append(element("h2", "", roles[role]));
-    const output =
-      role === "reviewer" ? run.state.review : run.state[`${role}_findings`];
+    const output = run.state[roleFields[role]];
     if (!output || !Object.keys(output).length)
-      block.append(
-        element("p", "panel-intro", "No completed findings for this role yet."),
-      );
-    else if (role !== "reviewer") {
-      output.findings.forEach((finding) => block.append(findingNode(finding)));
-      if (output.uncertainties?.length)
-        block.append(listSection("Uncertainties", "—", output.uncertainties));
+      block.append(element("p", "panel-intro", "No completed output for this role yet."));
+    else if (role === "reviewer") {
+      block.append(element("p", "", output.overall_assessment));
+      output.concerns.forEach((concern) => block.append(concernNode(concern)));
+      if (!output.concerns.length)
+        block.append(element("p", "", "No concrete concerns returned after limited inspection."));
     } else {
-      block.append(
-        element(
-          "p",
-          "panel-intro",
-          output.correction_required
-            ? `Correction requested for the ${output.target === "methods" ? "methods analyst" : "investigator"}.`
-            : "No correction requested. This is not independent verification.",
-        ),
-      );
-      output.issues.forEach((issue) =>
-        block.append(findingNode({ ...issue, kind: "reviewer_concern" })),
-      );
-      if (output.uncertainties.length)
-        block.append(
-          listSection("Remaining uncertainties", "—", output.uncertainties),
-        );
+      if (role === "writer") block.append(element("p", "accent", "Draft — see the final critical review."));
+      output.findings.forEach((finding) => block.append(findingNode(finding)));
     }
+    if (output?.uncertainties?.length)
+      block.append(listSection("Uncertainties", "—", output.uncertainties));
     host.append(block);
   }
-  run.state.reviews.forEach((review, index) =>
-    host.append(
-      jsonDetails(
-        `Reviewer pass ${index + 1} — ${review.correction_required ? "correction requested" : "no correction requested"}`,
-        review,
-      ),
-    ),
-  );
-  if (run.state.correction_history.length)
-    host.append(
-      jsonDetails(
-        "Correction history — earlier findings",
-        run.state.correction_history,
-      ),
-    );
 }
 function renderSource() {
   const host = $("selected-source");
@@ -298,27 +253,18 @@ function renderSource() {
   }
   const reviewHost = $("margin-review");
   reviewHost.replaceChildren();
-  const review = run?.state?.review;
-  if (!review || !Object.keys(review).length)
-    reviewHost.append(
-      element(
-        "p",
-        "margin-empty",
-        "The reviewer’s concerns will appear after the review.",
-      ),
-    );
-  else if (review.issues.length)
-    review.issues.forEach((issue) =>
-      reviewHost.append(element("p", "", issue.statement)),
-    );
-  else
-    reviewHost.append(
-      element(
-        "p",
-        "margin-empty",
-        "No correction requested. Check the cited passages before relying on the findings.",
-      ),
-    );
+  const review = run?.state?.critical_review;
+  if (!review?.overall_assessment)
+    reviewHost.append(element("p", "margin-empty", run?.state?.status === "incomplete"
+      ? "Final review did not complete. Treat the draft as unreviewed."
+      : "The final review will appear after the draft."));
+  else {
+    reviewHost.append(element("p", "", review.overall_assessment));
+    review.concerns.forEach((concern) =>
+      reviewHost.append(element("p", "", `${concern.target.toUpperCase()}: ${concern.concern}`)));
+    if (!review.concerns.length)
+      reviewHost.append(element("p", "margin-empty", "No concrete concerns returned after limited inspection; not scientific approval."));
+  }
 }
 function renderSources() {
   const query = $("source-filter").value.trim().toLowerCase();
@@ -390,7 +336,6 @@ function updateStatus(event) {
       visit_started: "starting",
       model_request: "requesting a model response",
       visit_completed: "findings recorded",
-      correction_scheduled: `one correction scheduled for ${roles[event.target] || event.target}`,
       tool_executed: `used ${event.tool}`,
       incomplete: "could not finish",
     };
@@ -401,7 +346,7 @@ function updateStatus(event) {
   const calls = run.state.model_calls || 0;
   const tools = run.state.tool_calls || 0;
   $("run-counts").textContent =
-    `${calls} requests · ${tools} tools · ${run.state.correction_count || 0}/1 corrections`;
+    `${calls} requests · ${tools} tools`;
 }
 function render() {
   $("results").hidden = !run;
@@ -476,16 +421,13 @@ function acceptMessage(message) {
       state: {
         status: "running",
         error: "",
-        final_report: "",
-        investigator_findings: {},
-        methods_findings: {},
-        writer_findings: {},
-        review: {},
-        reviews: [],
-        correction_history: [],
+        final_output: "",
+        reader_findings: {},
+        analyst_findings: {},
+        report_draft: {},
+        critical_review: {},
         model_calls: 0,
         tool_calls: 0,
-        correction_count: 0,
       },
     };
     selectedEvidence = Object.keys(run.evidence)[0] || null;
@@ -575,7 +517,7 @@ async function startInvestigation(event) {
     if (began && run.state.status !== "complete") {
       run.state.status = "incomplete";
       run.state.error = message;
-      run.state.final_report = "";
+      run.state.final_output = "";
       save();
     } else formError(message);
     if (!began) $("setup-section").hidden = false;
@@ -584,6 +526,9 @@ async function startInvestigation(event) {
     setRunning(false);
     render();
   }
+}
+function markdownCitations(ids) {
+  return ids.map((id) => `[${id} · PDF page ${run.evidence[id].page}]`).join(" ");
 }
 function markdownReport() {
   const s = run.state;
@@ -596,31 +541,27 @@ function markdownReport() {
     `Question: ${run.meta.question}`,
     `Model requests: ${s.model_calls} · Tool executions: ${s.tool_calls}`,
   ];
-  parts.push(
-    s.status === "complete"
-      ? s.final_report
-      : `## Incomplete run\n${s.error}\nNo completed report was produced.`,
-  );
-  for (const [title, value] of [
-    ["Investigator findings", s.investigator_findings],
-    ["Methods findings", s.methods_findings],
-    ["Reviewer history", s.reviews],
-    ["Correction history", s.correction_history],
-  ]) {
-    parts.push(
-      `## ${title}\n\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``,
-    );
+  if (s.final_output) parts.push(s.final_output);
+  else {
+    // A disconnected stream can leave a draft without Python's final formatter.
+    // Export that received state honestly, without another model request.
+    parts.push(`## Incomplete investigation\n\n${s.error || "The final review has not completed."}`);
+    parts.push("The draft did not receive a completed final critical review.");
+    parts.push("## Paper explanation — report draft");
+    for (const finding of s.report_draft?.findings || [])
+      parts.push(`### ${finding.topic}\n\n${finding.statement} ${markdownCitations(finding.evidence_ids)}`);
+    parts.push("## Final critical review\n\nNot completed. Treat the draft as unreviewed.");
+    for (const role of ["reader", "analyst"])
+      parts.push(`## ${roles[role]} findings\n\n${JSON.stringify(s[roleFields[role]], null, 2)}`);
+    parts.push(`## Remaining uncertainties\n\n${allUncertainties(s).map((item) => `- ${item}`).join("\n")}`);
+    const referenced = new Set(parts.join("\n").match(/\bE\d{4,}\b/g) || []);
+    parts.push("## Referenced source passages");
+    [...referenced].sort().forEach((id) => {
+      const source = run.evidence[id];
+      if (source) parts.push(`### ${id} · PDF page ${source.page}\n\n${source.text.split("\n").map((line) => `> ${line}`).join("\n")}`);
+    });
   }
-  const referenced = new Set(parts.join("\n").match(/\bE\d{4,}\b/g) || []);
-  parts.push("## Referenced source passages");
-  [...referenced].sort().forEach((id) => {
-    const source = run.evidence[id];
-    if (source)
-      parts.push(`### ${id} · PDF page ${source.page}\n\n${source.text}`);
-  });
-  parts.push(
-    "Only the uploaded paper was investigated. No other literature was searched and global novelty was not established. Valid citations and matching quotes do not establish semantic support. Agent agreement is not scientific verification.",
-  );
+  parts.push("Only the uploaded paper was examined. No external literature search or global novelty assessment. Exact references are not proof of semantic correctness. The draft is never automatically rewritten after final review.");
   return parts.join("\n\n");
 }
 $("export").addEventListener("click", () => {
@@ -684,7 +625,7 @@ $("question").addEventListener(
 );
 $("example").addEventListener("click", () => {
   $("question").value =
-    "Explain this paper’s contribution, assess its experimental evidence, identify its stated limitations, and suggest follow-up research questions.";
+    "Explain this paper’s contribution, assess its experimental evidence, identify its stated limitations, and explain what remains unclear or unsupported.";
   $("question").dispatchEvent(new Event("input"));
   $("question").focus();
 });
@@ -744,7 +685,11 @@ try {
     const candidate = JSON.parse(saved);
     if (
       candidate?.meta &&
-      candidate?.state &&
+      candidate?.state?.reader_findings &&
+      candidate?.state?.analyst_findings &&
+      candidate?.state?.report_draft &&
+      candidate?.state?.critical_review &&
+      ["running", "complete", "incomplete"].includes(candidate.state.status) &&
       candidate?.evidence &&
       candidate?.pages &&
       Array.isArray(candidate.events)
@@ -754,7 +699,7 @@ try {
         run.state.status = "incomplete";
         run.state.error =
           "The page was refreshed during execution. Available findings were kept; the investigation was not restarted.";
-        run.state.final_report = "";
+        run.state.final_output = "";
       }
       selectedEvidence = Object.keys(run.evidence)[0] || null;
       $("setup-section").hidden = true;
