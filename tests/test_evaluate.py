@@ -180,3 +180,134 @@ def test_full_text_baseline_preserves_whitespace_gaps():
     state = initial_state('Read.', {1:text})
     full = full_paper_context(state)[0]['labeled_text']
     assert re.sub(r'\[SOURCE E\d+ / PDF page \d+\]', '', full) == text
+
+
+def test_evaluation_only_text_override_is_explicit_and_bounded():
+    from evaluate import case_text_limit
+    assert case_text_limit({}) == 20000
+    assert case_text_limit({'max_text_chars': 30000}) == 30000
+    for value in (True, 0, 30001, '30000'):
+        with pytest.raises(ValueError, match='text limit'):
+            case_text_limit({'max_text_chars': value})
+
+
+def public_fixture(tmp_path, monkeypatch):
+    from evaluate import prepare_public
+    manifest = prepare_synthetic(tmp_path / 'synthetic')
+    case = json.loads(manifest.read_text())['cases'][0]
+    pdf = Path(case['pdf']).read_bytes()
+    # Keep relative names in a portable public manifest.
+    case['pdf'] = 'paper.pdf'
+    case['pdf_sha256'] = digest(pdf)
+    review = json.dumps({'reviews': [{'comments': 'Independent reviewer issue.'}]}).encode()
+    license_data = b'Public fixture licence'
+    case.update(pdf_url='https://example.test/paper', review_url='https://example.test/review',
+                license_url='https://example.test/license', review_sha256=digest(review),
+                license_sha256=digest(license_data))
+    for issue in case['known_issues']:
+        issue.update(review_index=0, review_quote='Independent reviewer issue.')
+    (tmp_path / 'evaluation').mkdir()
+    (tmp_path / 'evaluation/public_cases.json').write_text(json.dumps({'cases': [case]}))
+    monkeypatch.chdir(tmp_path)
+    blobs = {case['pdf_url']: pdf, case['review_url']: review, case['license_url']: license_data}
+    return prepare_public, blobs
+
+
+def test_public_preparation_verifies_sources_and_reuses_local_cache(tmp_path, monkeypatch):
+    prepare, blobs = public_fixture(tmp_path, monkeypatch)
+    fetch = Mock(side_effect=blobs.__getitem__)
+    manifest = prepare(tmp_path / 'downloaded', fetch)
+    assert load_cases(manifest)['cases']
+    assert fetch.call_count == 3
+    prepare(tmp_path / 'downloaded', Mock(side_effect=AssertionError('unexpected network')))
+
+
+def test_public_preparation_rejects_changed_review_bytes(tmp_path, monkeypatch):
+    prepare, blobs = public_fixture(tmp_path, monkeypatch)
+    blobs['https://example.test/review'] = b'changed review'
+    with pytest.raises(ValueError, match='hash mismatch'):
+        prepare(tmp_path / 'downloaded', blobs.__getitem__)
+
+
+def test_public_preparation_rejects_reference_quote_mismatch(tmp_path, monkeypatch):
+    prepare, blobs = public_fixture(tmp_path, monkeypatch)
+    path = tmp_path / 'evaluation/public_cases.json'
+    data = json.loads(path.read_text())
+    data['cases'][0]['known_issues'][0]['review_quote'] = 'not in review'
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match='Reference comment'):
+        prepare(tmp_path / 'downloaded', blobs.__getitem__)
+
+
+def test_guided_review_requires_explicit_human_attestation(tmp_path):
+    from evaluate import review_interactively
+    run, _ = fixture_run(tmp_path)
+    answers = iter(['Test assessor', 'u', 'u', 'no'])
+    output = tmp_path / 'annotations.json'
+    assert review_interactively(run, output, lambda _: next(answers), lambda _: None) is None
+    assert json.loads(output.read_text())['human_attested'] is False
+
+
+def test_guided_review_records_real_human_choices_and_scores(tmp_path):
+    from evaluate import review_interactively
+    run, _ = fixture_run(tmp_path)
+    # This is a mocked human session on a synthetic fixture, not a real scored paper.
+    answers = iter(['Test assessor', 'm', 'unmatched-comparison', 'Fixture rationale',
+                    'f', 'Second fixture rationale', 'YES'])
+    output = tmp_path / 'annotations.json'
+    scored = review_interactively(run, output, lambda _: next(answers), lambda _: None)
+    assert scored['arms']['baseline']['known_issues_identified'] == 1
+    assert scored['arms']['workflow']['false_alarms'] == 1
+    assert scored['real_cases_fully_scored'] == 0
+    assert json.loads(output.read_text())['human_attested'] is True
+
+
+def test_guided_review_quit_preserves_unattested_draft(tmp_path):
+    from evaluate import review_interactively
+    run, _ = fixture_run(tmp_path)
+    answers = iter(['Test assessor', 'q'])
+    path = tmp_path / 'annotations.json'
+    assert review_interactively(run, path, lambda _: next(answers), lambda _: None) is None
+    assert json.loads(path.read_text())['human_attested'] is False
+
+
+def test_guided_pilot_saves_runs_annotations_and_scores(tmp_path, monkeypatch):
+    import sys
+    import app
+    import evaluate
+    run, _ = fixture_run(tmp_path / 'fixtures')
+    manifest = prepare_synthetic(tmp_path / 'cases')
+    monkeypatch.setattr(app, 'settings', lambda: {'key': 'mock-only', 'model': 'mock-model', 'limits': Limits()})
+    monkeypatch.setattr(evaluate, 'prepare_public', Mock(return_value=manifest))
+    monkeypatch.setattr(evaluate, 'run_case', Mock(return_value=run))
+    human_review = Mock(return_value=score(run, human(run)))
+    monkeypatch.setattr(evaluate, 'review_interactively', human_review)
+    out = tmp_path / 'runs'
+    monkeypatch.setattr(sys, 'argv', ['evaluate.py', 'pilot', '--live', '--max-calls', '13', '--out', str(out)])
+    evaluate.main()
+    assert human_review.call_count == 1
+    assert list(out.glob('*.annotations.json')) and list(out.glob('*.scores.json'))
+    summary = json.loads((out / 'summary.json').read_text())
+    assert summary['runs'][0]['status'] == 'complete'
+    assert summary['real_cases_scored'] == 0  # This test used a synthetic case.
+
+
+def test_cli_failure_saves_partial_output_and_exits_nonzero(tmp_path, monkeypatch):
+    import sys
+    import app
+    import evaluate
+    run, _ = fixture_run(tmp_path / 'fixtures')
+    run['status'] = 'partial'
+    run['arms']['workflow'].update(status='incomplete', error='Safe provider failure')
+    manifest = prepare_synthetic(tmp_path / 'cases')
+    monkeypatch.setattr(app, 'settings', lambda: {'key': 'mock-only', 'model': 'mock-model', 'limits': Limits()})
+    fake_run = Mock(return_value=run)
+    monkeypatch.setattr(evaluate, 'run_case', fake_run)
+    out = tmp_path / 'runs'
+    monkeypatch.setattr(sys, 'argv', ['evaluate.py', 'run', '--cases', str(manifest),
+        '--live', '--max-calls', '26', '--out', str(out)])
+    with pytest.raises(SystemExit) as error:
+        evaluate.main()
+    assert error.value.code == 1 and fake_run.call_count == 1
+    assert list(out.glob('*.annotations.json'))
+    assert json.loads((out / 'summary.json').read_text())['runs'][0]['status'] == 'partial'

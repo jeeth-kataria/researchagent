@@ -1,0 +1,57 @@
+{
+  "target_real_cases": 12,
+  "cases": [
+    {
+      "id": "peerread-acl2017-68",
+      "kind": "real",
+      "paper_identifier": "PeerRead ACL 2017 submission 68: A New Formula for Vietnamese Text Readability Assessment",
+      "version": "Archived ACL submission PDF, PeerRead revision 9bb37751781a900cee9e74ec3105997732c8e8e5; not a later published version",
+      "pdf": "68.pdf",
+      "pdf_sha256": "bd095b223ecb9d3f6cbfc27b1047f27a212df80aa511a07df080073d26be6d81",
+      "pdf_url": "https://raw.githubusercontent.com/allenai/PeerRead/9bb37751781a900cee9e74ec3105997732c8e8e5/data/acl_2017/train/pdfs/68.pdf",
+      "review_url": "https://raw.githubusercontent.com/allenai/PeerRead/9bb37751781a900cee9e74ec3105997732c8e8e5/data/acl_2017/train/reviews/68.json",
+      "review_sha256": "8446f3e1e16a04cd469609c0e165d86ea97ea17a399a36a7d6e7fb46201ea6fa",
+      "license_url": "https://raw.githubusercontent.com/allenai/PeerRead/9bb37751781a900cee9e74ec3105997732c8e8e5/data/acl_2017/LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/allenai/PeerRead/9bb37751781a900cee9e74ec3105997732c8e8e5/data/acl_2017/train/pdfs/68.pdf and https://raw.githubusercontent.com/allenai/PeerRead/9bb37751781a900cee9e74ec3105997732c8e8e5/data/acl_2017/train/reviews/68.json; reviews indexed from zero",
+      "permission": "ACL 2017 collection CC BY 4.0; attribution: Kang et al., A Dataset of Peer Reviews (PeerRead), NAACL 2018. Local evaluation; no PDF/review redistribution.",
+      "max_text_chars": 30000,
+      "question": "Assess the experimental support and clarity of this paper. Identify concrete missing details or unsupported comparisons using only the paper.",
+      "version_match_basis": "PeerRead archives the submission draft and corresponding reviews under the same ACL 2017 ID 68 at a pinned commit. Review 2 quotes the 81% accuracy and practical-use claim found together on physical page 6; review 2 describes the three-class corpus on page 3. This is archival pairing plus content cross-checking, not an OpenReview revision-history audit.",
+      "known_issues": [
+        {
+          "id": "missing-baseline-comparison",
+          "category": "missing_detail",
+          "description": "The evaluation lacks accuracy comparisons with existing readability formulas, leaving the relative benefit of the proposed formula unclear.",
+          "provenance": "https://raw.githubusercontent.com/allenai/PeerRead/9bb37751781a900cee9e74ec3105997732c8e8e5/data/acl_2017/train/reviews/68.json#/reviews/2/comments; reviewer asks for accuracy of existing formulas and comparative pros/cons.",
+          "review_index": 2,
+          "review_quote": "the experimental section lacks comparisons with previous work and\nanalysis of results.",
+          "version_match_confirmed": true,
+          "match_criteria": "Explicitly identify missing comparable baseline/readability-formula results or inability to establish relative performance. Generic requests for more experiments do not suffice.",
+          "passages": [
+            {
+              "page": 6,
+              "quote": "81%. This is a good result and can be applied in\npractice."
+            }
+          ]
+        },
+        {
+          "id": "word-segmentation-unclear",
+          "category": "missing_detail",
+          "description": "The approach used to identify multi-syllable Vietnamese words, and its accuracy, is not specified clearly.",
+          "provenance": "https://raw.githubusercontent.com/allenai/PeerRead/9bb37751781a900cee9e74ec3105997732c8e8e5/data/acl_2017/train/reviews/68.json#/reviews/2/comments; reviewer asks how syllables are merged into words and with what accuracy.",
+          "review_index": 2,
+          "review_quote": "Do they use a particular approach for\nmerging syllables?",
+          "version_match_confirmed": true,
+          "match_criteria": "Identify unspecified word segmentation/tokenization or syllable-to-word merging and its consequences for word-count/readability features. Merely explaining Vietnamese syllables is not a match.",
+          "passages": [
+            {
+              "page": 4,
+              "quote": "In Vietnamese, word maybe monosyllabic or\npolysyllabic (compound word) with a whitespace\nbetween each syllable;"
+            }
+          ]
+        }
+      ],
+      "license_sha256": "cce5d01fa4a83b794271bd2c28cffdf99afd43c803e6ddefddae39b591ea7448"
+    }
+  ]
+}

@@ -1,9 +1,68 @@
 # Reproducible paper-review comparison
 
-The target is **12 real papers** with independently established issues. The current
-real-case manifest contains **0 cases; 0 real papers are scored**. Two original
+The target is **12 real papers** with independently established issues. There is now
+**one pinned public pilot case with two reference issues; 0 real papers are scored**. The default custom manifest is empty. Two original
 synthetic fixtures exercise the mechanics. They are not a research-paper benchmark.
 No private ACL ARR paper or reviewer feedback is included or inferred.
+
+## Run the guided public pilot
+
+From the project root with the existing virtual environment and `.env`:
+
+```sh
+.venv/bin/python evaluate.py pilot --live --max-calls 13 \
+  --out artifacts/public-evaluation
+```
+
+This downloads the pinned paper/review/licence, verifies their hashes and reference
+quotes, runs both approaches, saves raw outputs and blank annotations, and asks you
+to assess each paper concern. It shows the reference criteria and exact cited source
+passages. Use `u` for uncertain findings, `q` to save and stop. It never supplies
+AI-generated correctness labels or attests on your behalf. After your explicit `YES`,
+it writes a `.scores.json` file. A completed run is not a scored paper until both
+arms have completed and every unique paper concern is adjudicated.
+
+The case is **A New Formula for Vietnamese Text Readability Assessment**, submission
+68 in [PeerRead's ACL 2017 archive](https://github.com/allenai/PeerRead/tree/9bb37751781a900cee9e74ec3105997732c8e8e5/data/acl_2017).
+The collection is CC BY 4.0; attribution: Kang et al., *A Dataset of Peer Reviews
+(PeerRead)*, NAACL 2018. The registry pins the repository revision, PDF/review/licence
+hashes, review index, quoted comment, matching criterion and source anchors. Its two
+reference concerns are missing baseline comparisons and unclear Vietnamese word
+segmentation. They are reviewer concerns, not unquestionable factual errors.
+
+Version evidence is the archive's paired submission ID plus a content cross-check:
+the review's quoted 81% practical-use claim appears in that draft. This is not a live
+revision-history audit. No private ARR feedback is used. Unclear-licence ICLR
+candidates and known revised-version candidates were excluded from this pilot.
+
+The complete PDF contains 24,203 extracted characters before per-page stripping.
+It exceeds the default web cap, so the case explicitly records an **evaluation-only
+30,000-character cap**; both arms receive the same untruncated extraction. The web
+configuration is unchanged. This pilot tests the backend with that override; it
+does not establish that the deployed default upload settings accept this paper.
+Raw PDFs, reviews, prompts, judgements and results remain under ignored `artifacts/`.
+
+Preparation and inference can be separated, and guided assessment can be resumed:
+
+```sh
+python evaluate.py prepare-public --out artifacts/public-evaluation
+python evaluate.py plan --cases artifacts/public-evaluation/cases.json --case-limit 1
+python evaluate.py run --cases artifacts/public-evaluation/cases.json \
+  --case-limit 1 --max-calls 13 --live --out artifacts/public-evaluation/runs
+python evaluate.py review --run PATH_TO_RUN.json --annotations PATH_TO_ANNOTATIONS.json
+```
+
+`run` creates the annotations file automatically and stops with nonzero exit status
+on an incomplete arm. `review` saves after every answer and validates run/finding
+fingerprints. Resume the existing run to adjudicate; starting `pilot` again explicitly
+starts another quota-consuming investigation, not an inference resume.
+
+**Observed this session:** source preparation and validation succeeded. Live baseline
+execution failed to connect; a separate HTTPS diagnostic reported DNS resolution
+failure for `api.groq.com`. No baseline/model output, completed comparison, human
+judgement or real-paper score was produced. The workflow arm was not started.
+A normal network connection and human adjudication are still required. No billing,
+provider change, automatic retry or large evaluation was initiated.
 
 ## Prepare cases and estimate calls
 
@@ -27,7 +86,7 @@ python evaluate.py run --cases artifacts/evaluation/cases.json \
 
 Both arms use `GROQ_MODEL`, the same PDF bytes/hash, question, output-token limit
 and final concern schema. The single-call baseline gets **all extracted passages**
-for accepted inputs (up to 20,000 extracted characters), not a reduced keyword
+for inputs accepted under each case's recorded limit (20,000 by default; the public pilot explicitly uses 30,000), not a reduced keyword
 sample. It has no tools. The workflow has bounded section packets, two retrieval
 tools and up to 12 requests. Its source access and call budget therefore differ;
 results cannot isolate the causal effect of having four roles.
@@ -77,8 +136,9 @@ Use categories `ambiguity`, `missing_detail`, `unsupported_claim`, or
 proof of a factual error. Absence claims can have no passage anchor; record their
 scope and matching criterion. The loader verifies PDF hashes and supplied passage
 quotes. Version provenance, permission and independent labels still require curator
-judgement. Missing inputs are the 10–20 version-matched papers/reviews, permissions,
-reference-issue criteria and human assessment. No real corpus has been fabricated.
+judgement. One public pilot pair is prepared; reaching the 12-case target still requires
+11 more permitted, version-matched pairs and criteria, completed model runs and
+human assessment. No larger corpus or completed score is implied.
 
 ## Human assessment and scoring
 

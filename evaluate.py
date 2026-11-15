@@ -62,6 +62,115 @@ def prepare_synthetic(folder):
     return path
 
 
+def case_text_limit(case):
+    """Evaluation overrides are explicit; the web application's limit is unchanged."""
+    limit = case.get('max_text_chars', 20000)
+    if type(limit) is not int or not 1 <= limit <= 30000:
+        raise ValueError('Evaluation text limit must be between 1 and 30000')
+    return limit
+
+
+def prepare_public(folder, fetch=None):
+    """Download a pinned, attributed pilot pair and verify bytes and review anchors."""
+    if fetch is None:
+        from urllib.request import urlopen
+        def fetch(url):
+            with urlopen(url, timeout=30) as response:
+                data = response.read(4 * 1024 * 1024 + 1)
+            if len(data) > 4 * 1024 * 1024:
+                raise ValueError('Public evaluation download exceeds 4 MB')
+            return data
+    folder = Path(folder).resolve()
+    folder.mkdir(parents=True, exist_ok=True)
+    document = json.loads(Path('evaluation/public_cases.json').read_text())
+    for case in document['cases']:
+        pdf = folder / case['pdf']
+        review = folder / (case['id'] + '-reviews.json')
+        for path, url, expected in ((pdf, case['pdf_url'], case['pdf_sha256']),
+                                    (review, case['review_url'], case['review_sha256'])):
+            data = path.read_bytes() if path.exists() else fetch(url)
+            if digest(data) != expected:
+                raise ValueError('Public source hash mismatch; refusing changed source')
+            path.write_bytes(data)
+        license_path = folder / 'ACL2017-LICENSE.txt'
+        license_data = license_path.read_bytes() if license_path.exists() else fetch(case['license_url'])
+        if digest(license_data) != case['license_sha256']:
+            raise ValueError('Public licence hash mismatch')
+        license_path.write_bytes(license_data)
+        reviews = json.loads(review.read_text())['reviews']
+        for issue in case['known_issues']:
+            if issue['review_quote'] not in reviews[issue['review_index']]['comments']:
+                raise ValueError('Reference comment does not match the pinned review')
+    manifest = folder / 'cases.json'
+    manifest.write_text(json.dumps(document, indent=2))
+    load_cases(manifest)
+    return manifest
+
+
+def review_interactively(run, path, ask=input, show=print):
+    """A human assigns semantics; save after every answer so review is resumable."""
+    path = Path(path)
+    annotations = json.loads(path.read_text()) if path.exists() else annotation_template(run)
+    # Validate fingerprints before accepting a resumed session without claiming attestation.
+    check = dict(annotations, assessor='validation', human_attested=True)
+    score(run, check)
+    data = Path(run['case']['pdf']).read_bytes()
+    if digest(data) != run['case']['pdf_sha256']:
+        raise ValueError('PDF changed since the investigation; refusing incorrect source inspection')
+    assessor = ask('Your name (blank cancels): ').strip()
+    if not assessor:
+        return None
+    annotations.update(assessor=assessor, human_attested=False)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    def save():
+        path.write_text(json.dumps(annotations, indent=2))
+    save()
+    show('Reference reviews are opinions, not infallible errors. Unlisted findings are not automatically false.')
+    for issue in run['case']['known_issues']:
+        show(json.dumps(issue, indent=2))
+    evidence = initial_state(run['case']['question'], extract_pdf(
+        data, 4, case_text_limit(run['case'])))['evidence']
+    choices = {'m':'matches_known_issue', 'f':'false_alarm', 'a':'additional_valid',
+               'd':'duplicate', 'u':'unjudged'}
+    for arm, items in annotations['arms'].items():
+        for item in items:
+            finding = run['arms'][arm]['output']['concerns'][item['finding_index']]
+            if finding['target'] != 'paper':
+                continue
+            show(f"\n{arm}, finding {item['finding_index']}: " + json.dumps(finding, indent=2))
+            for eid in finding['evidence_ids']:
+                show(json.dumps(evidence[eid], indent=2))
+            while True:
+                choice = ask('m=known match, f=false alarm, a=additional valid, d=duplicate, u=unjudged, q=save/quit: ').strip().lower()
+                if choice == 'q':
+                    save(); return None
+                if choice not in choices:
+                    continue
+                updated = dict(item, verdict=choices[choice], issue_ids=[], duplicate_of=None,
+                               assessor=assessor, rationale='')
+                if choice == 'm':
+                    updated['issue_ids'] = [v.strip() for v in ask('Matching issue IDs, comma separated: ').split(',') if v.strip()]
+                if choice == 'd':
+                    try:
+                        updated['duplicate_of'] = int(ask('Earlier duplicate finding index: '))
+                    except ValueError:
+                        continue
+                if choice != 'u':
+                    updated['rationale'] = ask('Brief reason: ').strip()
+                old = dict(item)
+                item.update(updated)
+                try:
+                    score(run, dict(annotations, human_attested=True))
+                except ValueError as error:
+                    item.clear(); item.update(old); show(str(error)); continue
+                save(); break
+    if ask('Type YES to attest these are your own human judgements: ').strip() != 'YES':
+        save(); return None
+    annotations['human_attested'] = True
+    save()
+    return score(run, annotations)
+
+
 def load_cases(path):
     path = Path(path).resolve()
     document = json.loads(path.read_text())
@@ -82,7 +191,7 @@ def load_cases(path):
         data = Path(case['pdf']).read_bytes()
         if digest(data) != case['pdf_sha256']:
             raise ValueError('PDF hash does not match the labelled version')
-        pages = extract_pdf(data, 4, 20000)
+        pages = extract_pdf(data, 4, case_text_limit(case))
         issue_ids = set()
         for issue in case['known_issues']:
             if issue['id'] in issue_ids:
@@ -110,6 +219,7 @@ def plan(document, limits, case_limit):
         'selected_cases': len(selected), 'available_cases': len(document['cases']),
         'maximum_model_requests': len(selected) * (1 + maximum),
         'baseline_requests_per_case': 1, 'workflow_requests_per_case_max': maximum,
+        'extracted_text_limits': {case['id']: case_text_limit(case) for case in selected},
         'baseline_access': 'All extracted passages, no tools, one request',
         'workflow_access': 'Bounded section packets plus two retrieval tools; see coverage ledger',
         'warning': 'Different evidence access and call budgets prevent attributing differences solely to role count.'}
@@ -177,7 +287,7 @@ def run_case(case, key, model, limits, client_factory=make_client, execution_mod
         'timing_definition': 'Actual elapsed time per arm, from PDF extraction through final output; excludes upload/network transit to this application.'}
     for arm in ('baseline', 'workflow'):
         started = time.perf_counter()
-        state = initial_state(case['question'], extract_pdf(data, 4, 20000))
+        state = initial_state(case['question'], extract_pdf(data, 4, case_text_limit(case)))
         state['deadline'] = time.monotonic() + 240
         try:
             with client_factory(key) as client:
@@ -283,9 +393,22 @@ def annotation_template(run):
         for arm, record in run['arms'].items()}}
 
 
+def count_scored_runs(runs):
+    count = 0
+    for item in runs:
+        path = Path(item['file']).with_suffix('.scores.json')
+        if path.exists():
+            result = json.loads(path.read_text())
+            run = json.loads(Path(item['file']).read_text())
+            if result['run_id'] != run['run_id']:
+                raise ValueError('Score run ID does not match the saved investigation')
+            count += result['real_cases_fully_scored']
+    return count
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['prepare-synthetic', 'plan', 'run', 'annotate', 'score'])
+    parser.add_argument('command', choices=['prepare-synthetic', 'prepare-public', 'pilot', 'review', 'plan', 'run', 'annotate', 'score'])
     parser.add_argument('--cases', default='evaluation/cases.json')
     parser.add_argument('--out', default='artifacts/evaluation')
     parser.add_argument('--run')
@@ -297,13 +420,36 @@ def main():
     out = Path(args.out)
     if args.command == 'prepare-synthetic':
         print(prepare_synthetic(out))
+    elif args.command == 'prepare-public':
+        print(prepare_public(out))
+    elif args.command == 'review':
+        if not args.run or not args.annotations:
+            parser.error('review requires --run and --annotations')
+        value = review_interactively(json.loads(Path(args.run).read_text()), args.annotations)
+        if value is not None:
+            score_path = Path(args.run).with_suffix('.scores.json')
+            score_path.write_text(json.dumps(value, indent=2))
+            summary_path = score_path.parent / 'summary.json'
+            if summary_path.exists():
+                summary = json.loads(summary_path.read_text())
+                summary['real_cases_scored'] = count_scored_runs(summary['runs'])
+                summary_path.write_text(json.dumps(summary, indent=2))
+            print('Saved scores:', score_path)
     elif args.command in ('annotate', 'score'):
+        if not args.run or (args.command == 'score' and not args.annotations):
+            parser.error('Specify --run and, for score, --annotations')
         run = json.loads(Path(args.run).read_text())
         value = annotation_template(run) if args.command == 'annotate' else score(run, json.loads(Path(args.annotations).read_text()))
         print(json.dumps(value, indent=2))
     else:
         from app import settings
         config = settings()
+        if args.command == 'pilot':
+            # Downloads and inference require explicit opt-in even for the guided command.
+            if not args.live or not config['key'] or args.max_calls < 13:
+                parser.error('pilot requires --live, a server key and --max-calls at least 13')
+            args.cases = str(prepare_public(out))
+            args.case_limit = 1
         document = load_cases(args.cases)
         if args.case_limit < 1:
             parser.error('--case-limit must be positive')
@@ -317,15 +463,27 @@ def main():
         completed = []
         for case in document['cases'][:args.case_limit]:
             result = run_case(case, config['key'], config['model'], config['limits'])
+            for arm, record in result['arms'].items():
+                if record['status'] != 'complete':
+                    print(f"{arm}: {record['error']}")
             filename = out / f"{case['id']}-{result['run_id']}.json"
             filename.write_text(json.dumps(result, indent=2))
-            completed.append({'case': case['id'], 'kind': case['kind'], 'status': result['status'], 'file': str(filename)})
+            annotation_path = filename.with_suffix('.annotations.json')
+            annotation_path.write_text(json.dumps(annotation_template(result), indent=2))
+            if args.command == 'pilot' and result['status'] == 'complete':
+                scored = review_interactively(result, annotation_path)
+                if scored is not None:
+                    filename.with_suffix('.scores.json').write_text(json.dumps(scored, indent=2))
+            completed.append({'case': case['id'], 'kind': case['kind'], 'status': result['status'], 'file': str(filename), 'annotations': str(annotation_path)})
             if result['status'] != 'complete':
                 break
-        summary = {'plan': estimate, 'runs': completed, 'real_cases_scored': 0,
+        scored_count = count_scored_runs(completed)
+        summary = {'plan': estimate, 'runs': completed, 'real_cases_scored': scored_count,
                    'note': 'Run completion is not scoring. Human annotation and the score command are required.'}
         (out/'summary.json').write_text(json.dumps(summary, indent=2))
         print(json.dumps(summary, indent=2))
+        if any(item['status'] != 'complete' for item in completed):
+            raise SystemExit(1)
 
 
 if __name__ == '__main__':

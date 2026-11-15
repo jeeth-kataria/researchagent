@@ -127,11 +127,12 @@ oversized inputs are rejected; extracted columns/equations can still be imperfec
 
 [Evaluation instructions and annotation format](evaluation/README.md)
 
-The target is **12 independently labelled real papers**. Currently **0 genuine real
-cases are available and 0 real papers are scored**. Two original synthetic fixtures
+The target is **12 independently labelled real papers**. Currently **one public pilot case with two independently
+documented concerns is prepared; 0 real papers are scored**. Two original synthetic fixtures
 test mechanics; they are not a real-paper benchmark. No ARR paper/comments were
-available for this use. Missing inputs are exact permitted PDF/review versions,
-independent issue labels, matching criteria and human adjudication.
+available for this use. The public pilot pins an ACL 2017 submission and reviews
+with source hashes and matching criteria. Additional cases, completed live comparisons and human
+adjudication are still needed.
 
 The single-call baseline gets the **full accepted extraction**, the same model,
 question, source hash and output criteria. The workflow uses bounded source packets
@@ -141,6 +142,10 @@ outputs, source delivery, provider token counts when returned, and actual elapse
 seconds. Pytest duration is never presented as application latency.
 
 ```sh
+# One real-paper pilot: downloads, compares, then asks for human judgements.
+# Explicitly allows at most 13 requests; stops on provider/network errors.
+python evaluate.py pilot --live --max-calls 13 --out artifacts/public-evaluation
+
 python evaluate.py prepare-synthetic
 python evaluate.py plan --cases artifacts/evaluation/cases.json --case-limit 1
 # Explicit quota-consuming comparison: estimate is at most 13 requests for this pair.
@@ -148,6 +153,9 @@ python evaluate.py run --cases artifacts/evaluation/cases.json \
   --case-limit 1 --max-calls 13 --live --out artifacts/evaluation-runs
 ```
 
+The pilot records an evaluation-only 30,000-character cap for its untruncated PDF;
+the web default remains 20,000. Both arms use that same PDF. `review` guides human
+assessment and saves resumable annotations and scores without editing JSON.
 Scoring requires human annotations tied to run/finding fingerprints. It counts known
 issue hits, misses, false alarms, duplicates, additional valid and unjudged findings.
 An extra finding is not automatically false. Recall/missed counts require completed,
@@ -172,7 +180,7 @@ node --check public/app.js
 node --check tests/frontend_contract.cjs
 ```
 
-Session verification: **148 mocked tests passed; one local socket smoke test skipped**
+Session verification: **157 mocked tests passed; one local socket smoke test skipped**
 because this execution environment denies binding. JavaScript syntax checks passed.
 A local live synthetic comparison stopped after one connection failure in the baseline;
 the workflow arm was not started. That is a partial smoke attempt, not an evaluation
