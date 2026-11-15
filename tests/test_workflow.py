@@ -334,3 +334,17 @@ def test_runtime_tool_failure_preserves_draft(monkeypatch):
     assert result['critical_review'] == {}
     assert client.chat.completions.create.call_count == 6
     assert 'Source lookup failed' in result['error']
+
+
+def test_oversized_groq_request_has_actionable_safe_error_without_retry():
+    import groq
+    import httpx
+    request = httpx.Request('POST', 'https://api.groq.com/openai/v1/chat/completions')
+    error = groq.APIStatusError('private-organization-and-provider-message',
+        response=httpx.Response(413, request=request), body={})
+    state, client = run(visit('reader') + visit('analyst') + visit('writer') + [error])
+    assert state['status'] == 'incomplete' and state['report_draft']
+    assert 'oversized model request' in state['error']
+    assert 'Waiting alone' in state['error']
+    assert 'private-organization' not in json.dumps(state)
+    assert client.chat.completions.create.call_count == 6

@@ -40,7 +40,9 @@ Choose permitted tools using function calls. At most {models} model requests and
 reviewer MUST inspect nonempty source evidence before finalizing. An empty search
 is insufficient. Writer may use the previous findings directly without tools.
 When tools are disabled, return final JSON. Use the document outline and supplied source_passages; previews are partial.
-Never claim comprehensive inspection when passages are omitted. Reader should cover
+Never claim comprehensive inspection when passages are omitted. With partial
+coverage, say "not found in inspected passages" rather than asserting that the whole
+paper lacks a detail, unless inspected evidence establishes that absence. Reader should cover
 different available sections; analyst should focus on methods/results; reviewer
 should revisit cited claims and missing regions. Full source_passages are source
 access; previews alone are insufficient. Use tools for additional evidence as needed.
@@ -59,7 +61,8 @@ Report Writer too. Do not use summary/content keys or group findings under headi
 topic <=60 characters; statement <=450 characters.
 kind: author_statement, interpretation, or missing_information. Author statements
 and interpretations require 1–4 existing evidence IDs. Missing-information findings
-may have none; do not invent evidence for an absence. uncertainties: 0–4 nonempty
+must include "evidence_ids": [] when there is no citation; never omit this key.
+Do not invent evidence for an absence. uncertainties: 0–4 nonempty
 strings, each <=200 characters. Distinguish author statements from interpretations.
 """
 DRAFT_TOPICS = ("Problem and proposed approach", "Main contributions",

@@ -311,3 +311,39 @@ def test_cli_failure_saves_partial_output_and_exits_nonzero(tmp_path, monkeypatc
     assert error.value.code == 1 and fake_run.call_count == 1
     assert list(out.glob('*.annotations.json'))
     assert json.loads((out / 'summary.json').read_text())['runs'][0]['status'] == 'partial'
+
+
+def test_baseline_preserves_full_paper_without_json_escaping_pdf_lines(tmp_path):
+    from evaluate import full_paper_context
+    from pdf_reader import extract_pdf
+    from workflow import initial_state
+    result, client = fixture_run(tmp_path)
+    state = initial_state(result['case']['question'], extract_pdf(Path(result['case']['pdf']).read_bytes()))
+    user_message = client.chat.completions.create.call_args_list[0].kwargs['messages'][1]['content']
+    for page in full_paper_context(state):
+        assert page['labeled_text'] in user_message
+        assert f"[PDF page {page['page']}]" in user_message
+    assert result['case']['question'] in user_message
+
+
+def test_evaluation_spacing_is_shared_across_clients_without_retries(monkeypatch):
+    import evaluate
+    now = [100.0]
+    waits = []
+    def wait(seconds):
+        waits.append(seconds)
+        now[0] += seconds
+    monkeypatch.setattr(evaluate.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(evaluate.time, 'sleep', wait)
+    clients = []
+    def client(key, http_client):
+        clients.append(http_client)
+        return http_client
+    monkeypatch.setattr(evaluate, 'make_client', client)
+    factory = evaluate.paced_client_factory(30)
+    with factory('mock-only') as baseline_client, factory('mock-only') as workflow_client:
+        baseline_client.event_hooks['request'][0](None)
+        now[0] += 10
+        workflow_client.event_hooks['request'][0](None)
+    assert waits == [20]
+    assert len(clients) == 2

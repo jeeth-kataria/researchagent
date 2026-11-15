@@ -22,10 +22,11 @@ def sanitize(value, secret: str = ""):
     return value
 
 
-def make_client(api_key: str) -> groq.Groq:
+def make_client(api_key: str, http_client=None) -> groq.Groq:
     if not api_key.strip():
         raise RunError("GROQ_API_KEY is missing. Set it in your local .env or deployment environment.")
-    return groq.Groq(api_key=api_key, max_retries=0, timeout=60.0)
+    options = {} if http_client is None else {'http_client': http_client}
+    return groq.Groq(api_key=api_key, max_retries=0, timeout=60.0, **options)
 
 
 def call_model(client, model: str, messages: list[dict], tool_definitions: list[dict],
@@ -50,7 +51,12 @@ def call_model(client, model: str, messages: list[dict], tool_definitions: list[
                        "explicitly starting another run; no automatic retry was made.") from None
     except groq.APIConnectionError:
         raise RunError("Could not connect to Groq, or the request timed out. No retry was made.") from None
-    except groq.APIStatusError:
+    except groq.APIStatusError as error:
+        if error.status_code == 413:
+            raise RunError("Groq rejected an oversized model request. The paper/context and "
+                           "requested output may exceed this account's token limit. Use a shorter "
+                           "paper or reduce the configured context/output limits. Waiting alone "
+                           "does not shrink this request; no retry was made.") from None
         raise RunError("Groq rejected the request. Check GROQ_MODEL availability, tool-calling "
                        "support, permissions, input size, and provider status.") from None
     if on_response is not None:

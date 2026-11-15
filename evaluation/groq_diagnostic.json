@@ -1,0 +1,65 @@
+{
+  "recorded_utc": "2026-11-15T12:50:25.911148+00:00",
+  "model": "openai/gpt-oss-20b",
+  "authentication_check_http": 200,
+  "model_active": true,
+  "minimal_inference": {
+    "http_status": 200,
+    "reply": "OK",
+    "total_tokens": 97
+  },
+  "network_diagnosis": "Restricted Python execution could not resolve Groq or GitHub; standalone network-enabled curl reached both. Not evidence of a Groq outage.",
+  "account_observed_token_limit": 8000,
+  "oversized_attempts": [
+    {
+      "http_status": 413,
+      "requested_tokens": 8555,
+      "account_limit": 8000
+    },
+    {
+      "http_status": 413,
+      "requested_tokens": 8068,
+      "account_limit": 8000
+    }
+  ],
+  "comparison_attempt": {
+    "run_id": "3bc432c8b2464e40bacf7220502c2fd5",
+    "timestamp_utc": "2026-11-15T12:46:25.354794+00:00",
+    "pdf_sha256": "bd095b223ecb9d3f6cbfc27b1047f27a212df80aa511a07df080073d26be6d81",
+    "source_sha256": {
+      "agents.py": "f0c79ae355db35758ccecd39fba437b1ccf4da976804fa145366ebd00d4c961c",
+      "workflow.py": "f36445a1e74bf550ee00311886fa53a705937108f740d1799c221554bf662a15",
+      "reading.py": "7217f625bf54a61fe3deb8632d7e33b244e912beb2cedee3643b99f2521169a0",
+      "llm.py": "e9abc56b8811644169a127dc329979eb466cb30989eb518f391a9c377803dd42",
+      "tools.py": "06ab60f38ae22b49755748b6ed0b8428f824c7a08c9abbc942bccc5402e9b629",
+      "pdf_reader.py": "6bdeb843fa06fcc5e974f90b6ed3917a4341f11d5e31caa2ee8fe948f0884b65",
+      "evaluate.py": "cdfcf720ae4dfa497236cf2fc3b4578c007e9eddfd8ebe73e7a68de25cb485e6"
+    },
+    "output_token_cap": 1536,
+    "transport_note": "Official Groq SDK with tool-mediated curl HTTPS transport; elapsed times include orchestration waits, not application latency.",
+    "baseline": {
+      "status": "complete",
+      "model_calls": 1,
+      "tool_calls": 0,
+      "usage": {
+        "prompt_tokens": 7839,
+        "completion_tokens": 281,
+        "total_tokens": 8120
+      }
+    },
+    "workflow": {
+      "status": "incomplete",
+      "error": "Malformed finding fields.",
+      "model_calls": 2,
+      "tool_calls": 1,
+      "usage": {
+        "prompt_tokens": 5292,
+        "completion_tokens": 352,
+        "total_tokens": 5644
+      }
+    }
+  },
+  "subsequent_changes": "Evaluation pacing, conservative pilot output cap and missing-information field prompt clarification were added after this live attempt. These changes were tested offline, not live-verified.",
+  "real_papers_scored": 0,
+  "human_adjudication": null
+}

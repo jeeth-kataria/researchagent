@@ -156,6 +156,9 @@ python evaluate.py run --cases artifacts/evaluation/cases.json \
 The pilot records an evaluation-only 30,000-character cap for its untruncated PDF;
 the web default remains 20,000. Both arms use that same PDF. `review` guides human
 assessment and saves resumable annotations and scores without editing JSON.
+The pilot defaults to a shared 1,536-token output cap and 30-second request spacing;
+`--output-tokens` and `--request-interval` override these evaluation-only settings.
+Recorded elapsed time includes pacing. Quota errors stop the run without retries.
 Scoring requires human annotations tied to run/finding fingerprints. It counts known
 issue hits, misses, false alarms, duplicates, additional valid and unjudged findings.
 An extra finding is not automatically false. Recall/missed counts require completed,
@@ -180,17 +183,19 @@ node --check public/app.js
 node --check tests/frontend_contract.cjs
 ```
 
-Session verification: **157 mocked tests passed; one local socket smoke test skipped**
+Session verification: **160 mocked tests passed; one local socket smoke test skipped**
 because this execution environment denies binding. JavaScript syntax checks passed.
-A local live synthetic comparison stopped after one connection failure in the baseline;
-the workflow arm was not started. That is a partial smoke attempt, not an evaluation
-result. A complete production streamed investigation on one original synthetic fixture
-was then observed: four role visits, four model requests, no tools, and 6,970 tokens
-reported by Groq. NDJSON records arrived before completion. Two earlier smoke
-attempts ended incomplete and were preserved; the source gate and writer prompt
-were corrected before the successful run. This is operational verification, not
-an accuracy or latency benchmark. [Recorded smoke observation](evaluation/observed_smoke.json).
-No real-paper comparison score is available.
+A [recorded production synthetic smoke](evaluation/observed_smoke.json) completed
+four role visits with four requests and 6,970 provider-reported tokens; this is an
+operational observation, not an accuracy or latency benchmark.
+
+[Later Groq diagnostics](evaluation/groq_diagnostic.json) confirmed valid credentials,
+an active model and a successful 97-token inference via network-enabled curl.
+Full-paper requests initially exceeded the observed 8,000-token account limit
+(HTTP 413). Compact formatting and a 1,536 output cap allowed the real-paper
+baseline to complete; the workflow stopped on malformed reader fields. The later
+prompt clarification and pacing changes have offline checks. No completed real-paper
+comparison or human score is claimed.
 
 Tested Python 3.12.2; dependency versions are pinned in `requirements.txt`: pypdf,
 LangGraph, official Groq SDK, FastAPI, Uvicorn, python-multipart, python-dotenv,

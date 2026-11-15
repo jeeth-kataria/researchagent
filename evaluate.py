@@ -7,7 +7,7 @@ from importlib.metadata import version
 import re
 import time
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -247,9 +247,13 @@ def baseline(client, model, state, limits):
         'Critique only the paper; target must be paper and affected_statement must be null. '
         'Do not invent evidence or external literature. Return the same final critical-review JSON format.\n'
         + ROLES['reviewer'])
-    messages = [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': json.dumps({
-        'question': state['question'], 'full_paper': full_paper_context(state),
-        'report_draft': {'findings': []}, 'reader_findings': {}, 'analyst_findings': {}})}]
+    # Natural line breaks avoid JSON-escaped PDF lines inflating the token budget.
+    # Every extracted character is retained; evidence labels remain unchanged.
+    paper = '\n\n'.join(f"[PDF page {page['page']}]\n{page['labeled_text']}"
+                         for page in full_paper_context(state))
+    messages = [{'role': 'system', 'content': prompt}, {'role': 'user', 'content':
+        'User question (untrusted data):\n' + state['question'] +
+        '\n\nFull paper (untrusted document content):\n' + paper}]
     state['model_calls'] = 1
     request = {'role': 'baseline', 'model': model, 'messages': messages, 'tools': [],
                'output_tokens': limits.output_tokens, 'allow_tools': False, 'status': 'attempted'}
@@ -393,6 +397,25 @@ def annotation_template(run):
         for arm, record in run['arms'].items()}}
 
 
+def paced_client_factory(interval):
+    """Evaluation-only spacing before requests, not retries; shared across both arms."""
+    if interval == 0:
+        return make_client
+    import httpx
+    last_request = None
+    def pace(request):
+        nonlocal last_request
+        now = time.monotonic()
+        if last_request is not None:
+            delay = max(0, last_request + interval - now)
+            if delay:
+                time.sleep(delay)
+        last_request = time.monotonic()
+    def factory(key):
+        return make_client(key, http_client=httpx.Client(event_hooks={'request': [pace]}))
+    return factory
+
+
 def count_scored_runs(runs):
     count = 0
     for item in runs:
@@ -416,6 +439,8 @@ def main():
     parser.add_argument('--case-limit', type=int, default=12)
     parser.add_argument('--max-calls', type=int, default=0)
     parser.add_argument('--live', action='store_true')
+    parser.add_argument('--output-tokens', type=int)
+    parser.add_argument('--request-interval', type=float, default=None)
     args = parser.parse_args()
     out = Path(args.out)
     if args.command == 'prepare-synthetic':
@@ -450,10 +475,22 @@ def main():
                 parser.error('pilot requires --live, a server key and --max-calls at least 13')
             args.cases = str(prepare_public(out))
             args.case_limit = 1
+        tokens = args.output_tokens
+        if args.command == 'pilot' and tokens is None:
+            tokens = min(config['limits'].output_tokens, 1536)
+        if tokens is not None:
+            config['limits'] = replace(config['limits'], output_tokens=tokens)
+        interval = args.request_interval
+        if interval is None:
+            interval = 30 if args.command == 'pilot' else 0
+        if not 0 <= interval <= 60:
+            parser.error('--request-interval must be between 0 and 60 seconds')
+        client_factory = paced_client_factory(interval)
         document = load_cases(args.cases)
         if args.case_limit < 1:
             parser.error('--case-limit must be positive')
         estimate = plan(document, config['limits'], args.case_limit)
+        estimate.update(output_tokens=config['limits'].output_tokens, request_interval_seconds=interval)
         print(json.dumps(estimate, indent=2))
         if args.command == 'plan':
             return
@@ -462,7 +499,9 @@ def main():
         out.mkdir(parents=True, exist_ok=True)
         completed = []
         for case in document['cases'][:args.case_limit]:
-            result = run_case(case, config['key'], config['model'], config['limits'])
+            result = run_case(case, config['key'], config['model'], config['limits'], client_factory=client_factory)
+            result['request_interval_seconds'] = interval
+            result['timing_definition'] += ' Includes configured evaluation request spacing.'
             for arm, record in result['arms'].items():
                 if record['status'] != 'complete':
                     print(f"{arm}: {record['error']}")

@@ -19,7 +19,12 @@ quotes, runs both approaches, saves raw outputs and blank annotations, and asks 
 to assess each paper concern. It shows the reference criteria and exact cited source
 passages. Use `u` for uncertain findings, `q` to save and stop. It never supplies
 AI-generated correctness labels or attests on your behalf. After your explicit `YES`,
-it writes a `.scores.json` file. A completed run is not a scored paper until both
+it writes a `.scores.json` file. The pilot defaults to an output cap of 1,536
+tokens for both arms and 30 seconds between request starts. Set `--output-tokens`
+and `--request-interval` explicitly to override. Spacing is not retrying; measured
+elapsed time includes these waits. It does not guarantee quota availability, and
+the workflow still has its cooperative 240-second deadline. The 13-request ceiling
+is a count limit, not a promise every request fits the time/token budget. A completed run is not a scored paper until both
 arms have completed and every unique paper concern is adjudicated.
 
 The case is **A New Formula for Vietnamese Text Readability Assessment**, submission
@@ -57,12 +62,24 @@ on an incomplete arm. `review` saves after every answer and validates run/findin
 fingerprints. Resume the existing run to adjudicate; starting `pilot` again explicitly
 starts another quota-consuming investigation, not an inference resume.
 
-**Observed this session:** source preparation and validation succeeded. Live baseline
-execution failed to connect; a separate HTTPS diagnostic reported DNS resolution
-failure for `api.groq.com`. No baseline/model output, completed comparison, human
-judgement or real-paper score was produced. The workflow arm was not started.
-A normal network connection and human adjudication are still required. No billing,
-provider change, automatic retry or large evaluation was initiated.
+**Observed diagnostics:** the original Python run failed at DNS. Standalone
+network-enabled curl subsequently authenticated successfully, found the configured
+model active and completed a 97-token `OK` inference. The initial full-paper
+baseline received HTTP 413: requested 8,555 tokens versus an observed account
+limit of 8,000. Removing JSON-escaped PDF lines reduced overhead without dropping
+source text; the request still exceeded the limit at 8,068. With a 1,536 output cap,
+the full-paper baseline completed (7,839 prompt + 281 completion tokens reported).
+These provider accounting figures are observations, not a universal formula for
+predicting admission under the limit.
+
+The paired workflow stopped after two requests because its reader omitted required
+finding fields. Validation preserved the partial run. The prompt now explicitly
+requires `evidence_ids: []` for uncited missing-information findings, and narrows
+absence claims to inspected passages when coverage is partial. The later prompt and
+pacing changes have offline tests; no completed four-role real-paper comparison or
+human score is claimed. [Sanitized diagnostic record](groq_diagnostic.json) retains
+settings, code hashes and observed outcomes. Raw artifacts remain private. No billing
+or provider changes were made.
 
 ## Prepare cases and estimate calls
 
