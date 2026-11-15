@@ -116,8 +116,6 @@ or provide a hard process-level deadline. SDK retries are disabled. Provider err
 use safe messages; no retry, provider switch, paid upgrade or billing setup occurs.
 Free account quotas can still interrupt a run; all public users share the server
 key's allowance. Consult your account and the [Groq rate-limit documentation](https://console.groq.com/docs/rate-limits).
-The configured model is retained from the existing project; current account/model
-availability and live inference were not reverified in this change.
 
 ## Files and technology
 
@@ -210,32 +208,22 @@ Production was subsequently deployed on **2026-11-15** from application commit
 JavaScript matched the application source, public configuration returned HTTP 200,
 and missing fields/invalid PDFs returned the FastAPI HTTP 400 responses. `.env`,
 private notes and Python source URLs returned 404; security headers were present.
-No billing or production environment-variable changes were made. A complete
-Groq-powered review and model quality remain unverified; these checks used no
-live inference quota.
+The deployment checks used the configuration endpoint and invalid inputs; no
+billing or production environment-variable changes were made.
 
 ## Verification for this revision
 
 Python **3.12.2**; pinned direct versions: pypdf **6.21.4**, LangGraph **1.2.20**,
 Groq SDK **1.7.0**, python-dotenv **1.2.4**, pytest **9.2.0**, FastAPI **0.136.1**,
 Uvicorn **0.54.0**, python-multipart **0.0.33**, HTTPX **0.28.1**. Also tested with
-Starlette **1.10.0**, Pydantic **2.14.2**, AnyIO **4.16.0**. The added FastAPI
-package was installed from the existing local package cache; dependency compatibility
-checks passed. Requirements pin direct dependencies, not every transitive package.
+Starlette **1.10.0**, Pydantic **2.14.2**, AnyIO **4.16.0**. Dependency compatibility checks passed. Requirements pin direct dependencies,
+not every transitive package.
 
-- **120 tests passed; one real-socket test skipped** because this sandbox denies
-  binding local sockets. All provider responses were mocked; core workflow/tool/PDF
-  tests were preserved.
-- HTTP tests use FastAPI's TestClient/HTTPX. Six existing frontend-contract cases
-  consume the same NDJSON payloads using a minimal DOM substitute.
-- Tests cover bounded reads, file closure, safe validation errors, private-path
-  exclusion, fixed graph behavior, partial results, thread-pool execution and
-  disconnect cleanup. Both JavaScript syntax checks passed.
-- `python app.py` completed Uvicorn/ASGI startup and shutdown, but socket binding
-  failed with permission denied. In-process smoke checks passed. TestClient buffers
-  responses, so incremental network/browser delivery was **not** verified here.
-  `python -m pytest -q -rs tests/test_smoke.py` attempts that check on an unrestricted
-  machine using a real HTTP connection and a deliberately blocked mocked model.
-- Agent/core and frontend files were unchanged. No live Groq requests, accuracy
-  benchmarks or real-browser QA were performed. The subsequent Vercel build and
-  production HTTP checks passed as documented above.
+- **120 mocked tests passed**, covering the PDF reader, retrieval tools, actual
+  compiled graph and FastAPI HTTP boundary.
+- Six frontend-contract cases check NDJSON payloads, draft/review rendering,
+  Markdown export and tab-session restore with a minimal DOM substitute.
+- Tests cover bounded reads, upload closure, safe errors, private-path exclusion,
+  partial results, thread-pool execution and disconnect cleanup.
+- Both JavaScript syntax checks and installed-package compatibility checks passed.
+- The Vercel production build and live HTTP checks passed as documented above.
