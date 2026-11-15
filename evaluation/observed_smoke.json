@@ -1,0 +1,210 @@
+{
+  "kind": "operational_synthetic_smoke_not_benchmark",
+  "application_commit": "6dba2f096ddbc0197923156caf91ac4f79e54d2d",
+  "deployment_id": "dpl_6BhHR875Mb6QmH6hCDYLibURosiz",
+  "url": "https://jeeth-researcher.vercel.app",
+  "fixture_id": "synthetic-comparison",
+  "pdf_sha256": "8f68fd481e18224cd7957b5e10c10443dea9216b158cf5d62df44d6ab3931c89",
+  "question": "Assess whether the conclusion is supported by the reported comparison. Identify the specific ambiguity or unsupported claim.",
+  "model": "openai/gpt-oss-20b",
+  "status": "complete",
+  "role_order": [
+    "reader",
+    "analyst",
+    "writer",
+    "reviewer"
+  ],
+  "model_calls": 4,
+  "tool_calls": 0,
+  "usage": {
+    "prompt_tokens": 6093,
+    "completion_tokens": 877,
+    "total_tokens": 6970
+  },
+  "provider_usage_by_request": [
+    {
+      "prompt_tokens": 1213,
+      "completion_tokens": 167,
+      "total_tokens": 1380
+    },
+    {
+      "prompt_tokens": 1368,
+      "completion_tokens": 166,
+      "total_tokens": 1534
+    },
+    {
+      "prompt_tokens": 1601,
+      "completion_tokens": 313,
+      "total_tokens": 1914
+    },
+    {
+      "prompt_tokens": 1911,
+      "completion_tokens": 231,
+      "total_tokens": 2142
+    }
+  ],
+  "observed_http_elapsed_seconds": 2.99525,
+  "timing_note": "One real HTTP observation from curl, not pytest or a latency benchmark.",
+  "incremental_delivery_observed": true,
+  "coverage": {
+    "extracted_characters": 331,
+    "passages": 2,
+    "outline_mode": "heading_heuristics",
+    "sections": 5,
+    "roles": {
+      "reader": {
+        "evidence_ids": [
+          "E0001",
+          "E0002"
+        ],
+        "source_characters": 331,
+        "preview_section_ids": [
+          "S001",
+          "S002",
+          "S003",
+          "S004",
+          "S005"
+        ],
+        "unique_source_characters": 331,
+        "preview_characters": 312,
+        "characters_supplied_in_any_form": 331,
+        "characters_not_supplied": 0,
+        "full_passage_characters_not_supplied": 0,
+        "evidence_not_supplied": []
+      },
+      "analyst": {
+        "evidence_ids": [
+          "E0002",
+          "E0001"
+        ],
+        "source_characters": 331,
+        "preview_section_ids": [
+          "S001",
+          "S002",
+          "S003",
+          "S004",
+          "S005"
+        ],
+        "unique_source_characters": 331,
+        "preview_characters": 312,
+        "characters_supplied_in_any_form": 331,
+        "characters_not_supplied": 0,
+        "full_passage_characters_not_supplied": 0,
+        "evidence_not_supplied": []
+      },
+      "writer": {
+        "evidence_ids": [],
+        "source_characters": 0,
+        "preview_section_ids": [
+          "S001",
+          "S002",
+          "S003",
+          "S004",
+          "S005"
+        ],
+        "unique_source_characters": 0,
+        "preview_characters": 312,
+        "characters_supplied_in_any_form": 312,
+        "characters_not_supplied": 19,
+        "full_passage_characters_not_supplied": 331,
+        "evidence_not_supplied": [
+          "E0001",
+          "E0002"
+        ]
+      },
+      "reviewer": {
+        "evidence_ids": [
+          "E0001",
+          "E0002"
+        ],
+        "source_characters": 331,
+        "preview_section_ids": [
+          "S001",
+          "S002",
+          "S003",
+          "S004",
+          "S005"
+        ],
+        "unique_source_characters": 331,
+        "preview_characters": 312,
+        "characters_supplied_in_any_form": 331,
+        "characters_not_supplied": 0,
+        "full_passage_characters_not_supplied": 0,
+        "evidence_not_supplied": []
+      }
+    },
+    "note": "Source spans are deduplicated; previews remain distinct from full passages. Successful response confirms submission, not comprehension or a full review."
+  },
+  "report_draft": {
+    "findings": [
+      {
+        "topic": "Problem and proposed approach",
+        "statement": "The paper addresses whether a new sorting method (Method\u00a0A) outperforms an existing approach (Method\u00a0B) across different input sizes, proposing a comparative runtime analysis.",
+        "kind": "author_statement",
+        "evidence_ids": [
+          "E0001"
+        ]
+      },
+      {
+        "topic": "Main contributions",
+        "statement": "It presents a direct comparison of Method\u00a0A and Method\u00a0B, reporting single runtime measurements for each and claiming Method\u00a0A\u2019s superior performance.",
+        "kind": "author_statement",
+        "evidence_ids": [
+          "E0002"
+        ]
+      },
+      {
+        "topic": "Experimental evidence",
+        "statement": "Results show Method\u00a0A completed in 2\u00a0ms on 100 inputs, while Method\u00a0B took 4\u00a0ms on 1,000 inputs, without reporting a broader range of inputs or multiple trials.",
+        "kind": "author_statement",
+        "evidence_ids": [
+          "E0002"
+        ]
+      },
+      {
+        "topic": "Limitations and missing information",
+        "statement": "The study lacks a systematic investigation over varying input sizes, uses different hardware for each method, and extrapolates a universal claim of faster performance from a single configuration.",
+        "kind": "interpretation",
+        "evidence_ids": [
+          "E0002"
+        ]
+      }
+    ],
+    "uncertainties": []
+  },
+  "critical_review": {
+    "overall_assessment": "The paper\u2019s claim that Method\u202fA is faster for all input sizes is not substantiated by the data presented; only a single runtime comparison at two specific input sizes is reported.",
+    "concerns": [
+      {
+        "target": "paper",
+        "category": "unsupported conclusion",
+        "concern": "The conclusion states that Method\u202fA is faster for all input sizes, yet the only reported runtime data are 2\u202fms for A on 100 inputs and 4\u202fms for B on 1,000 inputs. No performance measurements across a range of input sizes, nor any statistical analysis, are provided to justify a universal claim.",
+        "evidence_ids": [
+          "E0002"
+        ],
+        "suggested_clarification": "Include a systematic performance evaluation over multiple input sizes and multiple trials, and present statistical evidence (e.g., confidence intervals) to support any generalization.",
+        "affected_statement": null
+      }
+    ],
+    "uncertainties": [
+      "None identified beyond the lack of supporting data for the universal claim."
+    ]
+  },
+  "human_adjudication": null,
+  "real_papers_scored": 0,
+  "accuracy_comparison": null,
+  "earlier_production_attempts": [
+    {
+      "status": "incomplete",
+      "error": "Agent did not inspect original source evidence. Run incomplete.",
+      "model_calls": 1,
+      "total_tokens": 1403
+    },
+    {
+      "status": "incomplete",
+      "error": "Malformed finding fields.",
+      "model_calls": 3,
+      "total_tokens": 4277
+    }
+  ]
+}

@@ -111,3 +111,12 @@ as real-paper scores. There is no LLM judge or automatic semantic label matching
 A meaningful résumé accuracy comparison requires completed real runs **and** human
 adjudication. The implemented runner and coverage ledger can be described without
 claiming an accuracy improvement.
+
+## Observed operational smoke
+
+[observed_smoke.json](observed_smoke.json) records a completed production run on the
+original synthetic comparison fixture, including the exact PDF hash, code revision,
+output, source receipts and provider usage. It used four requests and zero tools
+because full source packets were supplied. Its HTTP elapsed time is one actual
+observation, not a benchmark. Two earlier incomplete attempts are recorded too.
+No human adjudication or real-paper accuracy score is assigned to this smoke.

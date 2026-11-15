@@ -176,8 +176,13 @@ Session verification: **148 mocked tests passed; one local socket smoke test ski
 because this execution environment denies binding. JavaScript syntax checks passed.
 A local live synthetic comparison stopped after one connection failure in the baseline;
 the workflow arm was not started. That is a partial smoke attempt, not an evaluation
-result. Actual production checks and any live streamed run are recorded separately
-in the completion handoff. No real-paper comparison score is available.
+result. A complete production streamed investigation on one original synthetic fixture
+was then observed: four role visits, four model requests, no tools, and 6,970 tokens
+reported by Groq. NDJSON records arrived before completion. Two earlier smoke
+attempts ended incomplete and were preserved; the source gate and writer prompt
+were corrected before the successful run. This is operational verification, not
+an accuracy or latency benchmark. [Recorded smoke observation](evaluation/observed_smoke.json).
+No real-paper comparison score is available.
 
 Tested Python 3.12.2; dependency versions are pinned in `requirements.txt`: pypdf,
 LangGraph, official Groq SDK, FastAPI, Uvicorn, python-multipart, python-dotenv,
@@ -196,3 +201,7 @@ Selected source text goes to Groq; prompt-injection resistance is not guaranteed
 Résumé description: **AI-assisted Python paper-review application with four fixed
 LangGraph roles, section-aware source packets, an auditable evidence-delivery ledger,
 and a reproducible single-model baseline evaluation with human adjudication.**
+
+Production application revision `6dba2f0` was deployed to the existing Vercel project;
+deployment `dpl_6BhHR875Mb6QmH6hCDYLibURosiz` reached READY. Homepage/configuration
+returned 200; invalid PDFs returned 400. No provider or billing change was made.
