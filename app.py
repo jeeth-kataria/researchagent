@@ -1,4 +1,4 @@
-"""FastAPI HTTP boundary; the synchronous paper workflow is unchanged.
+"""FastAPI boundary with NDJSON streaming and cancellable provider requests.
 
 Run `python app.py` or `uvicorn app:app --reload --host 127.0.0.1 --port 8000`.
 Vercel imports the same ASGI app through api/research.py.
@@ -10,8 +10,7 @@ import hmac
 import threading
 import logging
 from types import SimpleNamespace
-from functools import partial
-from collections import defaultdict, deque
+from collections import deque
 import json
 import os
 import time
@@ -123,7 +122,7 @@ def investigate(data: bytes, filename: str, question: str, pages: dict, config: 
             state['error'] = 'The investigation could not finish. Available findings are preserved; no retry was made.'
             state['final_output'] = ''
             yield {'type': 'state', 'state': public_state(state, config['key'])}
-    logging.getLogger(__name__).info('research_run %s', json.dumps(run_metrics(state)))
+    logging.getLogger('uvicorn.error').info('research_run %s', json.dumps(run_metrics(state)))
     yield {'type': 'finished', 'status': state['status']}
 
 
@@ -166,9 +165,9 @@ def run_metrics(state):
     error = state.get('error', '')
     failure = next((kind for kind, terms in {
         'cancelled': ('cancelled',), 'quota': ('quota', 'rate limit'), 'request_size': ('oversized',),
-        'credentials': ('credentials',), 'budget': ('budget',), 'model_output': ('JSON', 'finding', 'evidence', 'fields')
-    }.items() if any(term in error for term in terms)), 'other' if error else None)
-    return {**totals, 'reported_total_tokens': sum(item['total_tokens'] for item in records if type(item.get('total_tokens')) is int),
+        'credentials': ('credentials',), 'connection': ('connect', 'timed out'), 'budget': ('budget',), 'model_output': ('JSON', 'finding', 'evidence', 'fields')
+    }.items() if any(term.casefold() in error.casefold() for term in terms)), 'other' if error else None)
+    return {**totals, 'run_id': state.get('run_id'), 'reported_total_tokens': sum(item['total_tokens'] for item in records if type(item.get('total_tokens')) is int),
         'unknown_usage_requests': max(0, state.get('model_calls', 0) - len(records)), 'model_requests': state.get('model_calls', 0), 'tool_executions': state.get('tool_calls', 0),
         'elapsed_seconds': state.get('elapsed_seconds', 0), 'failure_reason': failure,
         'format_reasks': state.get('format_repairs', 0), 'revision_status': state.get('revision_status', 'not_requested'),
@@ -232,10 +231,11 @@ def ndjson_updates(data, filename, question, pages, config):
 
 
 class InvestigationResponse(StreamingResponse):
-    """Stream a sync iterator in Starlette's pool and close it on disconnect."""
+    """Stream graph work off-loop and cancel the async provider await on disconnect."""
 
-    def __init__(self, iterator):
+    def __init__(self, iterator, key=None):
         self.iterator = iterator
+        self.key = key
         super().__init__(iterator, media_type='application/x-ndjson',
                          headers={**API_HEADERS, 'X-Accel-Buffering': 'no'})
 
@@ -249,7 +249,7 @@ class InvestigationResponse(StreamingResponse):
         loop = asyncio.get_running_loop()
         stopped = threading.Event()
         active = set()
-        key = settings()['key']
+        key = self.key or settings()['key']
         async with groq.AsyncGroq(api_key=key, max_retries=0, timeout=45) as provider:
             async def create(**options):
                 if stopped.is_set():
@@ -270,6 +270,7 @@ class InvestigationResponse(StreamingResponse):
                 while True:
                     message = await receive()
                     if message['type'] == 'http.disconnect':
+                        logging.getLogger('uvicorn.error').info('research_request_disconnected')
                         stopped.set()
                         for call_scope in list(active):
                             call_scope.cancel()
@@ -332,7 +333,7 @@ async def start_investigation(request: Request, paper: Annotated[UploadFile, Fil
     pages = await run_in_threadpool(extract_pdf, data, config['max_upload_mb'], config['max_text_chars'], config['pdf_mode'])
     if not allow_request(request.client.host if request.client else 'unknown', config['rate_limit']):
         return json_response({'error': 'Too many investigations from this client address. Wait one minute.'}, 429)
-    return InvestigationResponse(ndjson_updates(data, filename, question, pages, config))
+    return InvestigationResponse(ndjson_updates(data, filename, question, pages, config), key=config['key'])
 
 
 if __name__ == '__main__':

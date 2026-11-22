@@ -74,6 +74,17 @@ if (fixture.status === 'complete') {
   assert.match(body, /Awaiting the final reviewer/);
   assert.match(markdown, /did not receive a completed final critical review/);
 }
+if (fixture.revision) {
+  assert.match(body, /Optional targeted revision/);
+  assert.match(markdown, /Optional targeted revision/);
+  assert.match(markdown, /not reviewed again/);
+  assert.match(body, /The comparison goes beyond the reported experiment/);
+}
+assert.match(page.nodes.get('run-metrics').textContent, /Run metrics/);
+assert.ok(page.nodes.get('cancel-run').handlers.click);
+page.evaluate('$("access-token").value = "private-browser-access-token"');
+page.evaluate('save()');
+assert.equal(page.evaluate('sessionStorage.getItem(storageKey)').includes('private-browser-access-token'), false);
 const fresh = boot();
 assert.ok(fresh.evaluate('run.state.report_draft.findings.length'));
 assert.equal(fresh.evaluate('run.state.status'), fixture.status === 'running' ? 'incomplete' : fixture.status);

@@ -1,4 +1,4 @@
-"""One Groq client factory and one request helper; no implicit retries."""
+"""Shared Groq helper and request-local HTTP client bridge; no implicit retries."""
 
 import re
 from contextvars import ContextVar
@@ -27,7 +27,8 @@ def sanitize(value, secret: str = ""):
     return value
 
 
-def make_client(api_key: str, http_client=None) -> groq.Groq:
+def make_client(api_key: str, http_client=None):
+    """HTTP binds its cancellable adapter; CLI uses the synchronous SDK client."""
     if not api_key.strip():
         raise RunError("GROQ_API_KEY is missing. Set it in your local .env or deployment environment.")
     options = {} if http_client is None else {'http_client': http_client}

@@ -1,183 +1,140 @@
 # Paper Research Team — Research Desk
 
-> Work in progress: BM25 retrieval, layout extraction, optional targeted revision, bounded format re-asks, configurable critic, and production controls. The existing 160 mocked tests pass (one socket test skipped); dedicated upgrade tests and documentation updates are still pending. No new accuracy results are claimed.
-
-[Open Research Desk](https://jeeth-researcher.vercel.app)
-
-Upload one English research-paper PDF and ask a focused question. Four roles explain
-its proposal, assess experimental evidence, write a draft and critically examine
-both the paper and the draft. Exact source passages and a coverage ledger make the
-reading inspectable. This is one-paper analysis, without external literature search
-or claims of global novelty, scientific verification or improved accuracy.
-
-The motivation came from Jeeth's ACL ARR submission: reassuring LLM feedback missed
-ambiguities human reviewers later identified. That motivates a distinct critical
-stage; it does not establish that this application reliably detects those issues.
+Examine one English research-paper PDF: explain the proposal, inspect experimental
+evidence, and read a separate critical review with exact source references.
+The motivation was reassuring LLM feedback that missed ambiguities later raised by
+human reviewers. That experience motivates the critic; it does not demonstrate
+better accuracy than a single model.
 
 ## Run locally
 
-Python 3.12; no frontend build step.
+Python 3.12 is recorded in `.python-version`; dependencies are pinned in
+`requirements.txt`. No new dependency was added for these upgrades.
 
 ```sh
-python3.12 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-[ -f .env ] || cp .env.example .env
-# Edit .env locally: GROQ_API_KEY and GROQ_MODEL.
+cp .env.example .env  # Only for a fresh setup; preserve an existing .env.
+# Set GROQ_API_KEY and a long random RESEARCH_ACCESS_TOKEN in .env.
 uvicorn app:app --reload --host 127.0.0.1 --port 8000
+# Alternative: python app.py
 ```
 
-Open http://localhost:8000. `python app.py` launches the same FastAPI app without
-reload. Windows activation: `.venv\Scripts\activate`. Environment variables override
-`.env`; restart after changes. Credentials remain server-side, outside Git and logs.
+Open http://127.0.0.1:8000. Enter the access token if requested, upload one PDF,
+enter a question, optionally enable targeted revision, and start. Download the
+Markdown report or inspect evidence, team notes and per-run metrics.
 
-## Architecture
+## Workflow
 
 ```mermaid
 flowchart LR
-    UI[Browser: PDF + question] --> API[FastAPI: validate upload]
-    API --> P[Extract pages, exact evidence and heuristic sections]
-    P --> R[Paper Reader] --> A[Evidence Analyst]
-    A --> W[Report Writer: draft] --> C[Critical Reviewer: final]
-    C --> N[NDJSON over HTTP: draft, critique, coverage, sources] --> UI
+    S([START]) --> R[Paper Reader]
+    R --> A[Evidence Analyst]
+    A --> W[Report Writer: original draft]
+    W --> C[Critical Reviewer]
+    C -->|revision off or no report concern| E([END])
+    C -->|revision enabled and exact report statement flagged| P[Same Writer: one patch request]
+    P --> E
 ```
 
-LangGraph has exactly four sequential nodes. Earlier findings pass directly through
-shared state. One Groq-hosted model performs every role. The reviewer runs last;
-there is no correction loop, supervisor or automatic rewrite after review.
+There are **four roles**, not a fifth supervisor. Reader explains the problem and
+proposal; Analyst checks datasets, baselines, metrics and reported evidence. Writer
+combines their structured findings. Reviewer challenges the paper and the draft.
+Findings travel directly through typed LangGraph state.
 
-- **Reader:** plain-language problem, approach and contributions; receives distributed
-  source passages across the detected regions.
-- **Analyst:** examines datasets, baselines, metrics, conditions and reported results;
-  its initial packet prioritizes methods/experiments/results.
-- **Writer:** combines findings into an explanation draft; source tools remain available.
-- **Reviewer:** receives the draft and earlier findings, revisits cited sources and
-  other available passages, then reports concrete paper/report concerns, suggested
-  clarifications and uncertainties. Report concerns identify the affected draft text.
+Optional revision changes only exact draft statements flagged by the Reviewer.
+Python rejects patches to other statements, invented evidence and duplicate indices.
+The original draft and review remain visible; the separate revision receives **no
+second review**. A failed revision preserves both original results and marks the run
+incomplete. No accuracy improvement from revision or model diversity has been measured.
 
-FastAPI handles `UploadFile`/`Form` and readable errors. Uvicorn serves the ASGI app
-locally. PDF extraction and the synchronous investigation iterator run in worker
-threads. `StreamingResponse` returns one JSON object per line: NDJSON is a format
-inside HTTP, not a replacement for HTTP or token streaming. Disconnect cleanup
-cannot instantly cancel an in-flight synchronous provider call.
+## Retrieval, PDF extraction and source limits
 
-## Section-aware reading and honest coverage
+`search_paper(query)` ranks exact passages using standard-library **BM25** with term
+frequency, inverse document frequency and passage-length normalization. It returns
+at most four passages; `get_evidence(id)` returns one exact stored passage. Tools
+have explicit argument schemas and fixed Python dispatch. BM25 remains lexical:
+it can miss paraphrases such as “dataset” versus “ImageNet.” There are no embeddings,
+vector database, external literature searches or global novelty claims.
 
-`reading.py` recognizes standalone common headings, optionally numbered, such as
-Introduction, Methods, Results and Limitations. At least two distinct recognized
-headings are required; otherwise reading regions are physical pages. Contents-page
-listings are ignored. This heuristic can misclassify headings and does not understand
-layout, tables or figures.
+pypdf's **layout extraction** preserves horizontal text positions useful for table
+rows. `PDF_EXTRACTION_MODE=plain` restores ordinary extraction. This does not infer
+table semantics, interpret figure images or reliably reconstruct equations. Scanned,
+encrypted, unreadable and oversized PDFs are rejected; there is no OCR. Uploads are
+capped at 4 MiB and extracted text at 20,000 characters by default, without truncation.
+Endpoint reads stop at limit + one byte; multipart spooling and hosting limits also apply.
 
-The original evidence registry is unchanged: deterministic IDs, physical PDF pages,
-exact text and character offsets in passages of at most 800 characters. A passage
-crossing a heading can belong to two regions; IDs/text are never invented or rewritten.
+Each exact passage keeps a deterministic ID, physical page and character offsets
+into the selected extraction. Existing labelled evaluation cases retain their plain
+extraction to preserve source anchors. Section-heading heuristics and source limits
+were not expanded: full source bodies remain bounded to 4,800 characters per visit,
+including tools; outline previews are counted separately. Whole passages may be
+omitted. Coverage records delivery, **not understanding or semantic correctness**.
 
-Each role gets at most 24 outline previews of 80 characters. The reader's full-source
-packet is distributed across regions; the analyst prioritizes experimental sections;
-the reviewer revisits draft references and other available material. The configured
-full-passage budget defaults to **4,800 characters per visit**, with 800 reserved for
-tool retrieval. Tools share that same budget; whole passages are omitted rather
-than silently shortened. Outlines/previews are separate from this body-text budget. Follow-up requests resend
-the existing conversation; provider token counts include that repetition.
+## Models, format handling and budgets
 
-Only two model-callable tools exist: `search_paper(query)` (keyword overlap, up to
-four bounded matches) and `get_evidence(evidence_id)` (one exact passage). No embeddings,
-vector database or external search is used. Reader, analyst and reviewer must receive nonempty full source passages, through
-their packet or a tool response. Previews and empty searches alone do not count.
-
-Coverage distinguishes extraction, short previews, confirmed full-passage submission
-and text not supplied to each role. Confirmation means the provider returned a
-response, including a truncated one; a failed connection has unknown receipt.
-Prompts prepared before a failed request are not claimed as received. The UI/export
-show exact full-passage IDs and deduplicated text spans. Preview-only characters
-are counted separately; text not supplied in any form excludes overlapping previews. **Delivery is not understanding,
-complete section review or semantic correctness.** Shared findings are context, not
-new source inspection. Exact ID/page/offset validation prevents invented addresses,
-but a real passage can still be irrelevant to a conclusion.
-
-## Configuration and limits
-
-| Variable | Default / bound |
+| Setting | Default / purpose |
 | --- | --- |
-| `GROQ_API_KEY` | Server-side credential |
-| `GROQ_MODEL` | `openai/gpt-oss-20b`, shared by all roles |
-| `GROQ_MAX_OUTPUT_TOKENS` | 2048; allowed 128–8192 per request |
-| `MAX_SOURCE_CHARS_PER_ROLE` | 4800; allowed 1600–8000, full passages including tool additions |
-| `MAX_UPLOAD_MB` | 4 MiB; capped at 4 for Vercel |
-| `MAX_TEXT_CHARS` | 20,000; reject rather than truncate |
-| `MAX_MODEL_REQUESTS_PER_VISIT` | 3; allowed 1–3 |
-| `MAX_TOOL_CALLS_PER_VISIT` | 2; allowed 1–2 |
-| `MAX_TOTAL_MODEL_REQUESTS` | 12; legacy settings up to 24 remain valid without adding visits |
-| `PORT` | 8000 for `python app.py`; Uvicorn CLI uses `--port` |
+| `GROQ_API_KEY` | Server-side Groq credential |
+| `GROQ_MODEL` | `openai/gpt-oss-20b` for Reader, Analyst, Writer and revision |
+| `GROQ_REVIEWER_MODEL` | `openai/gpt-oss-120b`; set equal to `GROQ_MODEL` to share a model |
+| `GROQ_MAX_OUTPUT_TOKENS` | 2048 per request; configurable 128–8192 |
+| `MAX_MODEL_REQUESTS_PER_VISIT` | 3; includes tool follow-ups and format re-asks |
+| `MAX_TOOL_CALLS_PER_VISIT` | 2 |
+| `MAX_TOTAL_MODEL_REQUESTS` | 13 in the HTTP app; may lower the reachable ceiling |
+| `MAX_SOURCE_CHARS_PER_ROLE` | 4800; no expanded reading/map stage |
+| `MAX_UPLOAD_MB`, `MAX_TEXT_CHARS` | 4 MiB / 20,000 characters |
+| `PDF_EXTRACTION_MODE` | `layout` or `plain` |
 
-Four visits permit **at most 12 model requests and 8 tool executions**. A successful path can finish in four requests with source packets alone; tools
-add follow-up requests when the model chooses them. Every follow-up is
-a request; a response with two tool requests executes two tools. Counters include
-attempts, including failures. SDK retries are disabled. A cooperative 240-second
-deadline starts after extraction; individual hosted calls are capped at 45 seconds.
-Quota, provider, malformed-output and budget failures preserve available findings
-and mark the run incomplete. A failed final reviewer leaves an explicitly unreviewed
-draft. Free-plan quotas can interrupt runs; public users share the server allowance.
+Both configured GPT-OSS models appear in Groq's [supported models](https://console.groq.com/docs/models)
+and [free-plan limits](https://console.groq.com/docs/rate-limits). Availability and
+account quotas can differ. A larger critic is a design choice, not scientific independence.
+No automatic provider/model fallback, billing upgrade or SDK retry is enabled.
 
-The upload endpoint reads at most the file limit plus one byte and checks actual
-bytes. Multipart parsing can spool before that check; this is not a network-level
-body limit. No OCR or language detection exists. Scanned, unreadable, encrypted or
-oversized inputs are rejected; extracted columns/equations can still be imperfect.
+Groq currently documents [structured outputs](https://console.groq.com/docs/structured-outputs)
+as incompatible with tool use. Agents retain genuine function calling and runtime
+validation. **One format-only re-ask across the entire run** may use a remaining
+request in its visit. It has no tools. Existing content values and field positions
+must survive; semantic changes and invalid citations are rejected. This is not a
+content-repair loop, and malformed output can still leave an incomplete run.
 
-## Evaluation: baseline versus workflow
+Four main visits permit at most **12 requests and 8 tools**. Optional revision adds
+**one request and zero tools**, for at most **13 requests** if the total budget allows.
+The format re-ask fits inside those limits. The cooperative deadline remains 240
+seconds after extraction; request timeouts are at most 45 seconds. Quota and size
+errors stop without retry and preserve partial results.
 
-[Evaluation instructions and annotation format](evaluation/README.md)
+## HTTP, access control and observability
 
-The target is **12 independently labelled real papers**. Currently **one public pilot case with two independently
-documented concerns is prepared; 0 real papers are scored**. Two original synthetic fixtures
-test mechanics; they are not a real-paper benchmark. No ARR paper/comments were
-available for this use. The public pilot pins an ACL 2017 submission and reviews
-with source hashes and matching criteria. Additional cases, completed live comparisons and human
-adjudication are still needed.
+FastAPI serves `/`, `/app.js`, `/styles.css`, and GET/POST `/api/research`.
+POST accepts multipart PDF/question and optional `revise_report=true`, returning
+`application/x-ndjson`: one JSON object per line over ordinary HTTP.
 
-The single-call baseline gets the **full accepted extraction**, the same model,
-question, source hash and output criteria. The workflow uses bounded source packets
-and tools. These input/call-budget differences are recorded, not attributed solely
-to having multiple roles. Runs preserve prompts/settings, code/version identifiers,
-outputs, source delivery, provider token counts when returned, and actual elapsed
-seconds. Pytest duration is never presented as application latency.
+The graph runs off the async event loop. For HTTP investigations, a request-local
+adapter forwards Groq calls to the official **AsyncGroq** client on that loop.
+Disconnects or Cancel close the outgoing provider request and block subsequent
+calls. This cannot guarantee remote computation or quota accounting stops instantly.
+The CLI continues using the synchronous SDK.
 
-```sh
-# One real-paper pilot: downloads, compares, then asks for human judgements.
-# Explicitly allows at most 13 requests; stops on provider/network errors.
-python evaluate.py pilot --live --max-calls 13 --out artifacts/public-evaluation
+Set **`RESEARCH_ACCESS_TOKEN`** in local/deployment secrets before sharing. The
+browser sends it as a Bearer token, keeps it only in the current page, and never
+stores it in run records. An unset token leaves access public. A bounded, per-client
+address throttle defaults to three accepted investigations per minute per process;
+it is best effort, **not a distributed/serverless-wide quota guarantee**.
 
-python evaluate.py prepare-synthetic
-python evaluate.py plan --cases artifacts/evaluation/cases.json --case-limit 1
-# Explicit quota-consuming comparison: estimate is at most 13 requests for this pair.
-python evaluate.py run --cases artifacts/evaluation/cases.json \
-  --case-limit 1 --max-calls 13 --live --out artifacts/evaluation-runs
-```
+Activity shows graph elapsed time (excluding upload/extraction), requests, reported token usage, format re-asks, revision
+status and categorized failure reason. Optional `TOKEN_PRICES_JSON` maps exact model
+IDs to `{"input": RATE, "output": RATE}` in USD per million tokens. Missing rates or
+usage stay unknown. Displayed list-price estimates are **not actual bills**. Aggregate
+run summaries are logged without paper text, questions, credentials or filenames.
 
-The pilot records an evaluation-only 30,000-character cap for its untruncated PDF;
-the web default remains 20,000. Both arms use that same PDF. `review` guides human
-assessment and saves resumable annotations and scores without editing JSON.
-The pilot defaults to a shared 1,536-token output cap and 30-second request spacing;
-`--output-tokens` and `--request-interval` override these evaluation-only settings.
-Recorded elapsed time includes pacing. Quota errors stop the run without retries.
-Scoring requires human annotations tied to run/finding fingerprints. It counts known
-issue hits, misses, false alarms, duplicates, additional valid and unjudged findings.
-An extra finding is not automatically false. Recall/missed counts require completed,
-fully adjudicated arms; raw counts/denominators accompany percentages. There is no
-LLM judge. Review opinions can be ambiguities, missing detail or subjective suggestions,
-not unquestionable factual errors. No accuracy improvement is claimed.
+Session storage v4 retains received results/PDF text in the browser tab. Older schemas
+are ignored. Reload does not restart inference; a server restart loses in-memory work.
+Treat sensitive papers accordingly. Secrets, uploaded PDFs, artifacts and private
+`local-docs/` must remain excluded from publishing.
 
-## Files, testing and hosting
-
-| File | Responsibility |
-| --- | --- |
-| `app.py`, `api/research.py` | FastAPI endpoints, upload validation, NDJSON stream; same ASGI app on Vercel |
-| `pdf_reader.py`, `reading.py` | Physical pages/exact passages; section heuristics, packets and source-delivery ledger |
-| `agents.py`, `tools.py` | Four prompts, structured validation, bounded tool loop and two dispatch entries |
-| `workflow.py`, `llm.py` | Fixed LangGraph, deterministic export; one Groq helper, safe errors, token usage |
-| `evaluate.py`, `evaluation/` | Reproducible comparison, case/version checks and human scoring |
-| `public/` | Research Desk interface, safe text rendering, source inspection and Markdown download |
+## Tests, evaluation and hosting
 
 ```sh
 python -m pytest -q -rs
@@ -185,38 +142,25 @@ node --check public/app.js
 node --check tests/frontend_contract.cjs
 ```
 
-Session verification: **160 mocked tests passed; one local socket smoke test skipped**
-because this execution environment denies binding. JavaScript syntax checks passed.
-A [recorded production synthetic smoke](evaluation/observed_smoke.json) completed
-four role visits with four requests and 6,970 provider-reported tokens; this is an
-operational observation, not an accuracy or latency benchmark.
+Session checks: **176 tests passed; one real-socket smoke test skipped** because
+this environment blocks binding. JavaScript syntax checks passed. These were
+offline checks and do not establish live provider or deployment success.
 
-[Later Groq diagnostics](evaluation/groq_diagnostic.json) confirmed valid credentials,
-an active model and a successful 97-token inference via network-enabled curl.
-Full-paper requests initially exceeded the observed 8,000-token account limit
-(HTTP 413). Compact formatting and a 1,536 output cap allowed the real-paper
-baseline to complete; the workflow stopped on malformed reader fields. The later
-prompt clarification and pacing changes have offline checks. No completed real-paper
-comparison or human score is claimed.
+Offline checks cover the actual graph and HTTP stream, BM25 ranking, layout table
+alignment/exact offsets, revision restrictions, format budgets, auth/throttling,
+usage estimates, frontend/export/restore, and cancellation of an in-flight async SDK
+request through a mock transport. These are not real-paper accuracy measurements.
+See [evaluation instructions](evaluation/README.md): **0 real papers are scored**;
+one pinned pilot and two synthetic fixtures remain available. Items 1 and 3 were
+excluded from this update; no new evaluation result or coverage gain is claimed.
+The existing evaluation CLI retains its single-model, no-revision comparison settings.
 
-Tested Python 3.12.2; dependency versions are pinned in `requirements.txt`: pypdf,
-LangGraph, official Groq SDK, FastAPI, Uvicorn, python-multipart, python-dotenv,
-pytest and HTTPX. No new dependency is needed for reading/evaluation. LangGraph
-orchestrates nodes; no LangChain model wrappers are used.
+The existing Vercel Python entrypoint `api/research.py` imports this same ASGI app;
+`vercel.json` keeps public assets and API URLs intact. Configure Groq and access-token
+secrets in the existing project. Environment changes require a new deployment.
+A GitHub push is not proof of a ready deployment or successful inference. This update
+has not been live-model or production-deployment verified. Free quotas can stop runs.
 
-Vercel's existing `framework: null`, `public/` output and file-based ASGI entrypoint
-are retained. Production uses its existing environment variables. The 4 MiB PDF cap
-fits its documented 4.5 MB payload limit. Security headers and exclusions remain;
-private notes, secrets, PDFs, generated runs and evaluation-only code are excluded
-from deployment. The UI stores received results under tab `sessionStorage` v3;
-refresh restores them without rerunning, and New investigation clears the current
-record. There is no durable server job, authentication or per-user quota control.
-Selected source text goes to Groq; prompt-injection resistance is not guaranteed.
-
-Résumé description: **AI-assisted Python paper-review application with four fixed
-LangGraph roles, section-aware source packets, an auditable evidence-delivery ledger,
-and a reproducible single-model baseline evaluation with human adjudication.**
-
-Production application revision `6dba2f0` was deployed to the existing Vercel project;
-deployment `dpl_6BhHR875Mb6QmH6hCDYLibURosiz` reached READY. Homepage/configuration
-returned 200; invalid PDFs returned 400. No provider or billing change was made.
+Résumé wording: **Developed an AI-assisted Python paper-review application with
+LangGraph specialist roles, BM25 evidence retrieval, layout-aware PDF extraction,
+validated targeted revisions and a cancellable FastAPI NDJSON interface.**

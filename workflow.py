@@ -1,13 +1,14 @@
-"""Four fixed LangGraph stages; the final review never rewrites the draft."""
+"""Four roles, plus one optional Writer patch stage after the preserved review."""
 
 import re
 import copy
+import uuid
 import time
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from agents import DRAFT_TOPICS, Limits, emit, run_agent, parse_json, validate_output, validate_inline_references
+from agents import DRAFT_TOPICS, Limits, emit, run_agent, parse_json, validate_output
 from llm import call_model
 from llm import RunError
 from pdf_reader import prepare_passages
@@ -15,6 +16,7 @@ from reading import sections_for, coverage_summary
 
 
 class ResearchState(TypedDict):
+    run_id: str
     question: str
     pages: dict[int, str]
     evidence: dict[str, dict]
@@ -42,20 +44,21 @@ class ResearchState(TypedDict):
     format_repairs: int
     models: dict
     metrics: dict
+    prices: dict
 
 
 def initial_state(question: str, pages: dict[int, str]) -> ResearchState:
     if not question.strip() or len(question) > 2000 or not pages:
         raise RunError("Provide a question (at most 2000 characters) and extracted PDF pages.")
     evidence = prepare_passages(pages)
-    return ResearchState(question=question.strip(), pages=dict(pages),
+    return ResearchState(run_id=uuid.uuid4().hex, question=question.strip(), pages=dict(pages),
         evidence=evidence, reading=sections_for(pages, evidence),
         coverage={role: {"evidence_ids": [], "source_characters": 0, "preview_section_ids": []}
                   for role in ("reader", "analyst", "writer", "reviewer")},
         requests=[], usage=[], started_at=time.monotonic(), elapsed_seconds=0.0, reader_findings={}, analyst_findings={},
         report_draft={}, critical_review={}, final_output="", events=[], visits=[],
         report_revision={}, revision_requested=False, revision_status="not_requested",
-        format_repairs=0, models={}, metrics={}, model_calls=0, tool_calls=0, status="running", error="", deadline=0.0)
+        format_repairs=0, models={}, metrics={}, prices={}, model_calls=0, tool_calls=0, status="running", error="", deadline=0.0)
 
 
 def citations(ids: list[str], state: ResearchState) -> str:
@@ -69,6 +72,8 @@ def render_output(state: ResearchState) -> str:
         parts += ["## Incomplete investigation", state["error"],
                   "The draft did not receive a completed final critical review." if not state["critical_review"]
                   else "Critical review completed; the optional revision did not finish."]
+    if state.get('models'):
+        parts += ['## Model configuration used', '\n'.join(f"- {role}: {model}" for role, model in state['models'].items())]
     draft = state["report_draft"]
     if draft:
         parts += ["## Paper explanation — report draft",
@@ -98,7 +103,7 @@ def render_output(state: ResearchState) -> str:
         parts.append("Not completed. Treat the available explanation as an unreviewed draft.")
     if state.get('report_revision'):
         parts += ['## Optional targeted revision — not reviewed again',
-                  'The original draft and critical concerns above remain authoritative history. This revision is not verified.']
+                  'The original draft and critical concerns remain available for inspection. This revision is not verified.']
         for item in state['report_revision']['findings']:
             parts.append(f"- **{item['topic']}:** {item['statement']} " + citations(item['evidence_ids'], state))
     parts.append("## Source coverage — delivery, not scientific verification")
@@ -147,8 +152,7 @@ def build_graph(client, model: str, limits: Limits | None = None, on_event=None,
 
     def node(role):
         def visit(state: ResearchState):
-            # Fixed edges still advance after failure, but later nodes do no work.
-            # No subsequent model call is permitted once a run is incomplete.
+            # Failure skips remaining model work; an incomplete run cannot route to revision.
             if state["status"] == "incomplete":
                 return state
             try:
@@ -158,8 +162,10 @@ def build_graph(client, model: str, limits: Limits | None = None, on_event=None,
                 state[output_fields[role]] = run_agent(role, state, client, selected_model, limits, on_event)
                 state["elapsed_seconds"] = time.monotonic() - state["started_at"]
                 if role == "reviewer":
-                    state["status"] = "complete"
-                    state["final_output"] = render_output(state)
+                    pending = enable_revision and any(c['target'] == 'report' for c in state['critical_review']['concerns'])
+                    state['revision_status'] = 'pending' if pending else 'not_needed' if enable_revision else 'not_requested'
+                    state['status'] = 'running' if pending else 'complete'
+                    state['final_output'] = '' if pending else render_output(state)
             except Exception as error:
                 state["elapsed_seconds"] = time.monotonic() - state["started_at"]
                 state["status"] = "incomplete"
@@ -173,7 +179,7 @@ def build_graph(client, model: str, limits: Limits | None = None, on_event=None,
         return visit
 
     def route(state):
-        if (state['status'] == 'complete' and enable_revision and
+        if (state['status'] == 'running' and state.get('revision_status') == 'pending' and enable_revision and
                 any(c['target'] == 'report' for c in state['critical_review'].get('concerns', []))):
             return 'revise'
         return 'end'
@@ -182,8 +188,11 @@ def build_graph(client, model: str, limits: Limits | None = None, on_event=None,
         try:
             state['report_revision'] = revise_flagged(state, client, model, limits, on_event)
             state['revision_status'] = 'complete'
+            state['status'] = 'complete'
         except Exception as error:
             state['revision_status'] = 'incomplete'
+            if state['visits'] and state['visits'][-1].get('stage') == 'revision':
+                state['visits'][-1]['status'] = 'incomplete'
             state['status'] = 'incomplete'
             state['error'] = str(error) if isinstance(error, RunError) else 'Targeted revision failed; original draft and review preserved.'
             emit(state, 'writer', 'incomplete', {'message': state['error']}, on_event)
@@ -262,6 +271,8 @@ def revise_flagged(state, client, model, limits, on_event=None):
         index = patch['finding_index']
         if type(index) is not int or index not in flagged or index in changed:
             raise RunError('Revision attempted to change an unflagged or duplicate statement.')
+        if all(patch[key] == revised['findings'][index][key] for key in ('statement', 'kind', 'evidence_ids')):
+            raise RunError('Revision returned an unchanged flagged finding.')
         changed.add(index)
         revised['findings'][index].update({key: patch[key] for key in ('statement', 'kind', 'evidence_ids')})
     validate_output('writer', revised, state)

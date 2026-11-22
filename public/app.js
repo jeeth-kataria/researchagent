@@ -177,7 +177,7 @@ function renderReport() {
     notice.append(element("h2", "", state.status === "incomplete"
       ? "Incomplete investigation" : "The paper is being examined."));
     notice.append(element("p", "", state.status === "incomplete" ? state.error
-      : "Reader → Analyst → Writer → Critical Reviewer. Available results appear below."));
+      : state.revision_status === "pending" ? "Critical review completed. One targeted Writer revision is in progress." : "Reader → Analyst → Writer → Critical Reviewer. Available results appear below."));
     if (state.status === "incomplete")
       notice.append(element("p", "", state.critical_review?.overall_assessment ? "The critical review is preserved; the optional revision failed." : "Available findings are preserved. Any draft below did not receive a completed final critical review."));
     host.append(notice);
@@ -214,7 +214,7 @@ function renderReport() {
     : ["No additional uncertainties listed; this is not proof of completeness."]));
   if (state.report_revision?.findings?.length) {
     const revised = section("Optional targeted revision — not reviewed again", "07");
-    revised.append(element("p", "accent", "Only flagged statements were eligible for change. Original draft and concerns remain above."));
+    revised.append(element("p", "accent", "Only flagged statements were eligible for change; remaining concerns still apply. Original draft and concerns remain above."));
     state.report_revision.findings.forEach((finding) => revised.append(findingNode(finding)));
     host.append(revised);
   }
@@ -403,7 +403,7 @@ function render() {
   renderSources();
   renderPages();
   const metrics = run.state.metrics || {};
-  $("run-metrics").textContent = `Run metrics: ${Number(metrics.elapsed_seconds || 0).toFixed(2)} s · ${metrics.total_tokens ?? "unknown"} tokens · ${metrics.model_requests ?? run.state.model_calls} requests · format re-asks: ${metrics.format_reasks || 0} · failure: ${metrics.failure_reason || "none"} · list-price estimate: ${metrics.estimated_list_price_usd == null ? "not configured/unknown" : "$" + metrics.estimated_list_price_usd.toFixed(6)} (not actual billing)`;
+  $("run-metrics").textContent = `Run metrics: ${metrics.elapsed_seconds == null ? "unknown" : Number(metrics.elapsed_seconds).toFixed(2)} s · ${metrics.total_tokens ?? "unknown"} tokens · ${metrics.model_requests ?? run.state.model_calls} requests · format re-asks: ${metrics.format_reasks || 0} · failure: ${metrics.failure_reason || "none"} · list-price estimate: ${metrics.estimated_list_price_usd == null ? "not configured/unknown" : "$" + metrics.estimated_list_price_usd.toFixed(6)} (not actual billing)`;
   updateStatus(run.events[run.events.length - 1]);
   setView(view);
 }
@@ -558,6 +558,8 @@ async function startInvestigation(event) {
     if (began && run.state.status !== "complete") {
       run.state.status = "incomplete";
       run.state.error = message;
+      run.state.metrics = {...run.state.metrics, elapsed_seconds: null, total_tokens: null,
+        model_requests: run.state.model_calls, failure_reason: error.name === "AbortError" ? "cancelled" : "connection"};
       run.state.final_output = "";
       save();
     } else formError(message);
@@ -579,10 +581,12 @@ function markdownReport() {
     `PDF: ${run.meta.filename}`,
     `SHA-256: ${run.meta.digest}`,
     `Model via Groq: ${run.meta.model}`,
+    `Reviewer via Groq: ${run.meta.reviewer_model || run.meta.model}`,
     `Status: ${s.status}`,
     `Question: ${run.meta.question}`,
     `Model requests: ${s.model_calls} · Tool executions: ${s.tool_calls}`,
   ];
+  if (s.metrics) parts.push(`Execution metrics (reported usage, not actual billing): ${JSON.stringify(s.metrics)}`);
   if (s.final_output) parts.push(s.final_output);
   else {
     // A disconnected stream can leave a draft without Python's final formatter.

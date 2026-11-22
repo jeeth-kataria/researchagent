@@ -249,6 +249,18 @@ def content_values(value):
     return Counter({json.dumps(value, ensure_ascii=False, sort_keys=True): 1})
 
 
+def same_positions(original, candidate):
+    """Existing fields/array order cannot be reassigned by a format repair."""
+    if isinstance(original, dict):
+        return (isinstance(candidate, dict) and all(key in candidate and same_positions(value, candidate[key])
+                for key, value in original.items()) and all(key in original or
+                key in {'evidence_ids', 'uncertainties'} and value == [] for key, value in candidate.items()))
+    if isinstance(original, list):
+        return isinstance(candidate, list) and len(original) == len(candidate) and all(
+            same_positions(a, b) for a, b in zip(original, candidate))
+    return type(original) is type(candidate) and original == candidate
+
+
 def literal_values(text):
     # For malformed JSON, retain literal strings/numbers. Refuse repairs that
     # invent content from plain prose instead of attempting to reinterpret it.
@@ -294,6 +306,7 @@ def run_agent(role: str, state: dict, client, model: str, limits: Limits,
     inspected_source = False
     repaired = False
     original_values = None
+    original_shape = None
     for index in range(limits.model_per_visit):
         remaining = state.get('deadline', 0) - time.monotonic() if state.get('deadline') else None
         if remaining is not None and remaining <= 0:
@@ -332,16 +345,18 @@ def run_agent(role: str, state: dict, client, model: str, limits: Limits,
             try:
                 parsed = parse_json(message.content)
                 output = validate_output(role, parsed, state)
-                if original_values is not None and content_values(output) != original_values:
+                if original_values is not None and (content_values(output) != original_values or
+                        original_shape is not None and not same_positions(original_shape, output)):
                     raise RunError("Format repair changed content; output rejected.")
             except RunError as error:
                 # Only repair shape/syntax. Never repair invalid citations, source access,
                 # invalid writer topics, or a failure during a previous repair attempt.
                 repairable = any(word in str(error).lower() for word in ('json', 'fields', 'invalid list'))
-                if (not limits.format_repair or repaired or not repairable or
+                if (not limits.format_repair or repaired or state.get("format_repairs", 0) >= 1 or not repairable or
                         index == limits.model_per_visit - 1 or state['model_calls'] >= limits.total_model_calls):
                     raise
-                original_values = content_values(parsed) if 'parsed' in locals() else literal_values(message.content or '')
+                original_shape = parsed if 'parsed' in locals() else None
+                original_values = content_values(parsed) if original_shape is not None else literal_values(message.content or '')
                 repaired = True
                 state['format_repairs'] = state.get('format_repairs', 0) + 1
                 emit(state, role, 'format_repair', {'message': 'One format-only re-ask; substantive values must be preserved.'}, on_event, secret)

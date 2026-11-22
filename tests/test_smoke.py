@@ -27,6 +27,8 @@ def test_real_http_delivers_ndjson_before_model_completion(monkeypatch):
     port = listener.getsockname()[1]
     entered = threading.Event()
     release = threading.Event()
+    monkeypatch.setenv('RESEARCH_ACCESS_TOKEN', '')
+    monkeypatch.setenv('MAX_REQUESTS_PER_MINUTE', '1000')
     monkeypatch.setenv('GROQ_API_KEY', 'mock-private-key')
     monkeypatch.setenv('GROQ_MODEL', 'openai/gpt-oss-20b')
     monkeypatch.setenv('MAX_TOTAL_MODEL_REQUESTS', '12')

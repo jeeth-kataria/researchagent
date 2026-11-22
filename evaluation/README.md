@@ -5,6 +5,15 @@ The target is **12 real papers** with independently established issues. There is
 synthetic fixtures exercise the mechanics. They are not a research-paper benchmark.
 No private ACL ARR paper or reviewer feedback is included or inferred.
 
+## Application upgrade boundary
+
+The application now uses BM25 retrieval, layout extraction, a separately configurable
+critic and optional targeted revision. No new evaluation run or label was added for
+these changes. This CLI retains its existing same-model, no-revision comparison;
+archived cases default to plain extraction so exact reference anchors remain valid.
+Do not attribute earlier artifacts to this upgraded configuration or claim a measured
+BM25/revision improvement. Application coverage limits were not expanded.
+
 ## Run the guided public pilot
 
 From the project root with the existing virtual environment and `.env`:

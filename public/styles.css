@@ -1105,3 +1105,9 @@ body.is-running #setup-section {
 .coverage-panel { padding: 16px 0; border-bottom: 1px solid var(--rule); margin-bottom: 20px; }
 .coverage-panel summary { cursor: pointer; color: var(--accent); }
 .coverage-row { padding: 10px 0; border-bottom: 1px solid var(--rule); }
+
+/* The added controls use the existing Research Desk palette. */
+#access-field { margin-top: 14px; }
+#access-token { display: block; width: 100%; padding: 9px 12px; border: 1px solid var(--rule); background: var(--white); color: var(--ink); }
+#run-metrics { font: 12px/1.7 var(--mono); overflow-wrap: anywhere; }
+#revise-report { accent-color: var(--accent); }
