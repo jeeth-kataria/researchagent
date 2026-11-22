@@ -87,7 +87,8 @@ Use the findings JSON below with 1–8 findings and exactly these four topic val
 Problem and proposed approach; Main contributions; Experimental evidence;
 Limitations and missing information. Include at least one finding per topic.
 """ + FINDINGS_FORMAT.replace("1–6", "1–8"),
-    "reviewer": """You are the Critical Reviewer, the FINAL agent. Receive the
+    "reviewer": """You are the Critical Reviewer. Your critique is preserved even if an optional
+Writer correction follows; it receives no second review. Receive the
 question, reader_findings, analyst_findings, and report_draft. Inspect nonempty
 original source passages before finalizing. Critically examine BOTH the paper's
 claims, clarity and experimental support, and the draft's fidelity to the paper.
