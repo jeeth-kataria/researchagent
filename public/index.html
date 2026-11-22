@@ -47,7 +47,7 @@
         <p class="eyebrow breadcrumb" id="breadcrumb">
           Research desk / New investigation
         </p>
-        <div class="header-actions">
+        <div class="header-actions"><button class="text-button" id="cancel-run" type="button" hidden>Cancel investigation</button>
           <button class="text-button" id="new-run" type="button" hidden>
             New investigation</button
           ><button
@@ -89,7 +89,7 @@
                     required
                 /></label>
                 <p class="file-hint" id="file-hint">
-                  English · embedded text · up to 4 MB
+                  English · layout-aware text extraction · up to 4 MB
                 </p>
               </div>
             </div>
@@ -109,6 +109,8 @@
                   Use an example question</button
                 ><span class="small muted" id="question-length">0 / 2,000</span>
               </div>
+              <label class="small"><input type="checkbox" id="revise-report" /> Allow one targeted Writer revision of flagged statements</label>
+              <div id="access-field" hidden><label class="small" for="access-token">Research desk access token</label><input id="access-token" type="password" autocomplete="off" /></div>
               <div class="submit-line">
                 <p class="form-note">
                   Selected paper passages and your question go to Groq.<br />No
@@ -261,7 +263,7 @@
                 Actual model requests and local tool executions. Private model
                 reasoning is not recorded.
               </p>
-              <div id="activity-content"></div>
+              <div id="run-metrics" class="notice"></div><div id="activity-content"></div>
             </section>
             <section
               class="tabpanel"

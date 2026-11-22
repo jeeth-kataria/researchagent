@@ -129,7 +129,7 @@ def review_interactively(run, path, ask=input, show=print):
     for issue in run['case']['known_issues']:
         show(json.dumps(issue, indent=2))
     evidence = initial_state(run['case']['question'], extract_pdf(
-        data, 4, case_text_limit(run['case'])))['evidence']
+        data, 4, case_text_limit(run['case']), mode=run['case'].get('extraction_mode', 'plain')))['evidence']
     choices = {'m':'matches_known_issue', 'f':'false_alarm', 'a':'additional_valid',
                'd':'duplicate', 'u':'unjudged'}
     for arm, items in annotations['arms'].items():
@@ -191,7 +191,7 @@ def load_cases(path):
         data = Path(case['pdf']).read_bytes()
         if digest(data) != case['pdf_sha256']:
             raise ValueError('PDF hash does not match the labelled version')
-        pages = extract_pdf(data, 4, case_text_limit(case))
+        pages = extract_pdf(data, 4, case_text_limit(case), mode=case.get('extraction_mode', 'plain'))
         issue_ids = set()
         for issue in case['known_issues']:
             if issue['id'] in issue_ids:
@@ -291,7 +291,7 @@ def run_case(case, key, model, limits, client_factory=make_client, execution_mod
         'timing_definition': 'Actual elapsed time per arm, from PDF extraction through final output; excludes upload/network transit to this application.'}
     for arm in ('baseline', 'workflow'):
         started = time.perf_counter()
-        state = initial_state(case['question'], extract_pdf(data, 4, case_text_limit(case)))
+        state = initial_state(case['question'], extract_pdf(data, 4, case_text_limit(case), mode=case.get('extraction_mode', 'plain')))
         state['deadline'] = time.monotonic() + 240
         try:
             with client_factory(key) as client:

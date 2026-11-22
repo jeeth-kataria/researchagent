@@ -1,8 +1,13 @@
 """One Groq client factory and one request helper; no implicit retries."""
 
 import re
+from contextvars import ContextVar
+from contextlib import nullcontext
 
 import groq
+
+
+HTTP_CLIENT = ContextVar('request_groq_client', default=None)
 
 
 class RunError(ValueError):
@@ -26,6 +31,9 @@ def make_client(api_key: str, http_client=None) -> groq.Groq:
     if not api_key.strip():
         raise RunError("GROQ_API_KEY is missing. Set it in your local .env or deployment environment.")
     options = {} if http_client is None else {'http_client': http_client}
+    override = HTTP_CLIENT.get()
+    if override is not None and http_client is None:
+        return nullcontext(override)
     return groq.Groq(api_key=api_key, max_retries=0, timeout=60.0, **options)
 
 
@@ -64,7 +72,7 @@ def call_model(client, model: str, messages: list[dict], tool_definitions: list[
     if usage_log is not None:
         usage = getattr(response, 'usage', None)
         usage_log.append({name: getattr(usage, name, None) for name in
-                          ('prompt_tokens', 'completion_tokens', 'total_tokens')})
+                          ('prompt_tokens', 'completion_tokens', 'total_tokens')} | {'model': model})
     if not response.choices:
         raise RunError("Groq returned no choices.")
     choice = response.choices[0]

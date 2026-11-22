@@ -13,9 +13,10 @@ const roleFields = {reader: "reader_findings", analyst: "analyst_findings",
 const draftTopics = ["Problem and proposed approach", "Main contributions",
   "Experimental evidence", "Limitations and missing information"];
 // Older records lack the source-delivery ledger and are not restored.
-const storageKey = "research-desk.run.v3";
+const storageKey = "research-desk.run.v4";
 let run = null;
 let running = false;
+let controller = null;
 let selectedFile = null;
 let selectedEvidence = null;
 let view = "report";
@@ -178,7 +179,7 @@ function renderReport() {
     notice.append(element("p", "", state.status === "incomplete" ? state.error
       : "Reader → Analyst → Writer → Critical Reviewer. Available results appear below."));
     if (state.status === "incomplete")
-      notice.append(element("p", "", "Available findings are preserved. Any draft below did not receive a completed final critical review."));
+      notice.append(element("p", "", state.critical_review?.overall_assessment ? "The critical review is preserved; the optional revision failed." : "Available findings are preserved. Any draft below did not receive a completed final critical review."));
     host.append(notice);
   }
   const reportConcerns = state.critical_review?.concerns?.filter((item) => item.target === "report") || [];
@@ -211,7 +212,13 @@ function renderReport() {
   const uncertainties = allUncertainties(state);
   host.append(listSection("Remaining uncertainties", "06", uncertainties.length ? uncertainties
     : ["No additional uncertainties listed; this is not proof of completeness."]));
-  host.append(element("p", "report-disclaimer", "Only the uploaded paper was examined. All four roles share one model. Exact evidence references do not guarantee semantic correctness. The final reviewer critiques the paper and the draft; no agent rewrites the draft afterward."));
+  if (state.report_revision?.findings?.length) {
+    const revised = section("Optional targeted revision — not reviewed again", "07");
+    revised.append(element("p", "accent", "Only flagged statements were eligible for change. Original draft and concerns remain above."));
+    state.report_revision.findings.forEach((finding) => revised.append(findingNode(finding)));
+    host.append(revised);
+  }
+  host.append(element("p", "report-disclaimer", "Only this paper was examined. BM25 is lexical retrieval, not semantic search. The critic model may differ; neither model diversity nor evidence addresses guarantee correctness. An optional targeted revision receives no second review."));
 }
 function jsonDetails(title, value) {
   const details = element("details");
@@ -389,17 +396,20 @@ function render() {
     `/ ${Object.keys(run.pages).length} physical pages`;
   $("result-question").textContent = run.meta.question;
   $("provenance").textContent =
-    `PDF: ${run.meta.filename}. SHA-256: ${run.meta.digest}. Model via Groq: ${run.meta.model}. This record belongs to the PDF and question shown above.`;
+    `PDF: ${run.meta.filename}. SHA-256: ${run.meta.digest}. Models via Groq: ${run.meta.model}; critic: ${run.meta.reviewer_model || run.meta.model}. This record belongs to the PDF and question shown above.`;
   renderReport();
   renderTeam();
   renderSource();
   renderSources();
   renderPages();
+  const metrics = run.state.metrics || {};
+  $("run-metrics").textContent = `Run metrics: ${Number(metrics.elapsed_seconds || 0).toFixed(2)} s · ${metrics.total_tokens ?? "unknown"} tokens · ${metrics.model_requests ?? run.state.model_calls} requests · format re-asks: ${metrics.format_reasks || 0} · failure: ${metrics.failure_reason || "none"} · list-price estimate: ${metrics.estimated_list_price_usd == null ? "not configured/unknown" : "$" + metrics.estimated_list_price_usd.toFixed(6)} (not actual billing)`;
   updateStatus(run.events[run.events.length - 1]);
   setView(view);
 }
 function setRunning(value) {
   running = value;
+  $("cancel-run").hidden = !value;
   document.body.classList.toggle("is-running", value);
   [
     "paper",
@@ -492,6 +502,8 @@ async function startInvestigation(event) {
   const form = new FormData();
   form.append("paper", selectedFile, selectedFile.name);
   form.append("question", question);
+  form.append("revise_report", $("revise-report").checked ? "true" : "false");
+  controller = new AbortController();
   setRunning(true);
   notice("Uploading your paper and preparing the investigation…");
   let began = false;
@@ -499,6 +511,8 @@ async function startInvestigation(event) {
     const response = await fetch("/api/research", {
       method: "POST",
       body: form,
+      signal: controller.signal,
+      headers: $("access-token").value ? {Authorization: `Bearer ${$("access-token").value}`} : {},
       credentials: "same-origin",
     });
     if (!response.ok) {
@@ -537,7 +551,7 @@ async function startInvestigation(event) {
         "The connection closed before the investigation finished. No automatic retry was made.",
       );
   } catch (error) {
-    const message =
+    const message = error.name === "AbortError" ? "Investigation cancelled. Available results are preserved." :
       error instanceof SyntaxError
         ? "The response could not be read. No automatic retry was made."
         : error.message;
@@ -549,6 +563,7 @@ async function startInvestigation(event) {
     } else formError(message);
     if (!began) $("setup-section").hidden = false;
   } finally {
+    controller = null;
     notice("");
     setRunning(false);
     render();
@@ -573,11 +588,19 @@ function markdownReport() {
     // A disconnected stream can leave a draft without Python's final formatter.
     // Export that received state honestly, without another model request.
     parts.push(`## Incomplete investigation\n\n${s.error || "The final review has not completed."}`);
-    parts.push("The draft did not receive a completed final critical review.");
+    parts.push(s.critical_review?.overall_assessment ? "The critical review is preserved; optional revision may be incomplete." : "The draft did not receive a completed final critical review.");
     parts.push("## Paper explanation — report draft");
     for (const finding of s.report_draft?.findings || [])
       parts.push(`### ${finding.topic}\n\n${finding.statement} ${markdownCitations(finding.evidence_ids)}`);
-    parts.push("## Final critical review\n\nNot completed. Treat the draft as unreviewed.");
+    parts.push("## Final critical review");
+    if (s.critical_review?.overall_assessment) {
+      parts.push(s.critical_review.overall_assessment);
+      for (const concern of s.critical_review.concerns) parts.push(`${concern.target.toUpperCase()} concern: ${concern.concern} ${markdownCitations(concern.evidence_ids)}\nAffected statement: ${concern.affected_statement || "paper"}\nSuggested clarification: ${concern.suggested_clarification}`);
+    } else parts.push("Not completed. Treat the draft as unreviewed.");
+    if (s.report_revision?.findings?.length) {
+      parts.push("## Optional targeted revision — not reviewed again");
+      for (const finding of s.report_revision.findings) parts.push(`${finding.statement} ${markdownCitations(finding.evidence_ids)}`);
+    }
     for (const role of ["reader", "analyst"])
       parts.push(`## ${roles[role]} findings\n\n${JSON.stringify(s[roleFields[role]], null, 2)}`);
     parts.push(`## Remaining uncertainties\n\n${allUncertainties(s).map((item) => `- ${item}`).join("\n")}`);
@@ -589,7 +612,7 @@ function markdownReport() {
       if (source) parts.push(`### ${id} · PDF page ${source.page}\n\n${source.text.split("\n").map((line) => `> ${line}`).join("\n")}`);
     });
   }
-  parts.push("Only the uploaded paper was examined. No external literature search or global novelty assessment. Exact references are not proof of semantic correctness. The draft is never automatically rewritten after final review.");
+  parts.push("Only the uploaded paper was examined. No external literature search or global novelty assessment. Exact references are not proof of semantic correctness. An optional Writer revision changes only flagged statements and is not reviewed again.");
   return parts.join("\n\n");
 }
 $("export").addEventListener("click", () => {
@@ -657,6 +680,8 @@ $("example").addEventListener("click", () => {
   $("question").dispatchEvent(new Event("input"));
   $("question").focus();
 });
+$("cancel-run").addEventListener("click", () => controller?.abort());
+if (typeof window !== "undefined") window.addEventListener("pagehide", () => controller?.abort());
 $("investigation-form").addEventListener("submit", startInvestigation);
 $("source-filter").addEventListener("input", () => {
   if (run) renderSources();
@@ -752,6 +777,7 @@ fetch("/api/research", { cache: "no-store" })
   })
   .then((value) => {
     config = value;
+    $("access-field").hidden = !config.auth_required;
     $("start").disabled = running || !config.ready;
     $("file-hint").textContent =
       `English · embedded text · up to ${config.max_upload_mb} MB`;

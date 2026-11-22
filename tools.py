@@ -2,6 +2,8 @@
 
 import copy
 import re
+import math
+from collections import Counter
 
 
 class ToolError(ValueError):
@@ -19,7 +21,7 @@ ARGUMENTS = {
     "get_evidence": {"evidence_id": {"type": "string", "pattern": "^E[0-9]{4,}$"}},
 }
 DESCRIPTIONS = {
-    "search_paper": "Keyword search; return up to four exact passages with evidence IDs and pages. May miss paraphrases.",
+    "search_paper": "BM25 lexical search; return up to four exact passages with evidence IDs and pages. May miss paraphrases.",
     "get_evidence": "Look up one exact stored source passage and its physical PDF page.",
 }
 
@@ -50,18 +52,27 @@ def validate_arguments(role: str, name: str, arguments: dict, state: dict) -> No
 
 
 def search_paper(state: dict, query: str) -> dict:
-    keywords = set(re.findall(r"[a-z0-9]+", query.casefold()))
+    """Okapi BM25 (k1=1.5, b=.75); lexical ranking, not semantic retrieval."""
+    tokenize = lambda text: re.findall(r"[a-z0-9]+", text.casefold())
+    keywords = set(tokenize(query))
     if not keywords:
         raise ToolError("Search query must contain a keyword with letters or digits.")
+    corpus = [(entry, Counter(tokenize(entry['text']))) for entry in state['evidence'].values()]
+    average = sum(sum(words.values()) for _, words in corpus) / max(1, len(corpus))
     ranked = []
-    for evidence in state["evidence"].values():
-        words = set(re.findall(r"[a-z0-9]+", evidence["text"].casefold()))
-        score = len(keywords & words)
+    for entry, words in corpus:
+        score = 0.0
+        length = sum(words.values())
+        for word in keywords & words.keys():
+            frequency = sum(word in document for _, document in corpus)
+            inverse = math.log(1 + (len(corpus) - frequency + .5) / (frequency + .5))
+            count = words[word]
+            score += inverse * count * 2.5 / (count + 1.5 * (.25 + .75 * length / max(1, average)))
         if score:
-            ranked.append((score, evidence))
-    ranked.sort(key=lambda pair: (-pair[0], pair[1]["page"], pair[1]["start"]))
-    return {"matches": [copy.deepcopy(item) for _, item in ranked[:4]],
-            "total_matches": len(ranked), "method": "case-insensitive keyword overlap"}
+            ranked.append((score, entry))
+    ranked.sort(key=lambda pair: (-pair[0], pair[1]['page'], pair[1]['start']))
+    return {'matches': [copy.deepcopy(entry) for _, entry in ranked[:4]],
+            'total_matches': len(ranked), 'method': 'BM25 (k1=1.5, b=0.75)'}
 
 
 def get_evidence(state: dict, evidence_id: str) -> dict:

@@ -102,7 +102,7 @@ def test_token_usage_is_provider_data_not_guessed():
     client.chat.completions.create.return_value = response
     usage = []
     call_model(client, 'model', [], [], 128, False, usage_log=usage)
-    assert usage == [{'prompt_tokens':12,'completion_tokens':7,'total_tokens':19}]
+    assert usage == [{'prompt_tokens':12,'completion_tokens':7,'total_tokens':19,'model':'model'}]
     assert 'tools' not in client.chat.completions.create.call_args.kwargs
 
 

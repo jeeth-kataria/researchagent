@@ -90,7 +90,8 @@ def test_fixed_graph_four_roles_reviewer_last_and_tool_message_pairing():
     assert state['coverage']['reader']['evidence_ids']
     assert 'reasoning' not in json.dumps(state['events'])
     edges = {(edge.source, edge.target) for edge in build_graph(client, 'model').get_graph().edges}
-    assert edges == set(zip(['__start__', *ROLES], [*ROLES, '__end__']))
+    assert ('reviewer', 'revise') in edges and ('revise', '__end__') in edges
+    assert set(zip(['__start__', *ROLES[:-1]], ROLES)) <= edges
 
 
 def test_previous_findings_and_draft_pass_directly_in_state():
@@ -226,7 +227,8 @@ def test_malformed_review_preserves_draft_but_cannot_complete(decision):
     state, client = run(complete_run(decision))
     assert state['status'] == 'incomplete'
     assert state['report_draft'] and not state['critical_review']
-    assert state['model_calls'] == client.chat.completions.create.call_count == 7
+    assert state['model_calls'] == client.chat.completions.create.call_count
+    assert 7 <= state['model_calls'] <= 8
     assert state['visits'][-1]['agent'] == 'reviewer'
     assert 'did not receive a completed final critical review' in state['final_output']
 

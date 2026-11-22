@@ -20,6 +20,8 @@ def test_http_frontend_export_and_storage_contract(scenario, tmp_path, monkeypat
     node = shutil.which('node')
     if not node:
         pytest.skip('Node is optional for frontend contract checks; Python runtime does not require it.')
+    monkeypatch.setenv('MAX_REQUESTS_PER_MINUTE', '1000')
+    monkeypatch.setenv('RESEARCH_ACCESS_TOKEN', '')
     monkeypatch.setenv('GROQ_API_KEY', 'mock-private-key')
     monkeypatch.setenv('MAX_TOTAL_MODEL_REQUESTS', '12')
     client = Mock()

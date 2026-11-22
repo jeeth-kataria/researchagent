@@ -10,8 +10,10 @@ class PDFError(ValueError):
 
 
 def extract_pdf(data: bytes, max_upload_mb: int = 10,
-                max_text_chars: int = 20_000) -> dict[int, str]:
+                max_text_chars: int = 20_000, mode: str = "layout") -> dict[int, str]:
     """Return physical page numbers and text. Reject limits, never truncate."""
+    if mode not in {"plain", "layout"}:
+        raise PDFError("PDF extraction mode must be plain or layout.")
     if max_upload_mb <= 0 or max_text_chars <= 0:
         raise PDFError("PDF limits must be positive.")
     if not data:
@@ -27,7 +29,12 @@ def extract_pdf(data: bytes, max_upload_mb: int = 10,
             raise PDFError("Encrypted PDFs are unsupported. Upload an unencrypted copy.")
         total = 0
         for number, page in enumerate(reader.pages, 1):
-            text = (page.extract_text() or "").strip()
+            # Fixed-width layout preserves horizontal positions useful in tables.
+            # It remains extracted text, not table/figure or equation interpretation.
+            options = {'extraction_mode': mode}
+            if mode == 'layout':
+                options['layout_mode_space_vertically'] = False
+            text = (page.extract_text(**options) or "").strip()
             total += len(text)
             if total > max_text_chars:
                 raise PDFError(f"Extracted text exceeds {max_text_chars:,} characters. "

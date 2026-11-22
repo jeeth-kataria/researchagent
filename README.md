@@ -1,5 +1,7 @@
 # Paper Research Team — Research Desk
 
+> Work in progress: BM25 retrieval, layout extraction, optional targeted revision, bounded format re-asks, configurable critic, and production controls. The existing 160 mocked tests pass (one socket test skipped); dedicated upgrade tests and documentation updates are still pending. No new accuracy results are claimed.
+
 [Open Research Desk](https://jeeth-researcher.vercel.app)
 
 Upload one English research-paper PDF and ask a focused question. Four roles explain
